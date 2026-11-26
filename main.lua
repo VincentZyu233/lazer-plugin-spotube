@@ -59,14 +59,9 @@ function plugin.call(operation, args)
     local feed = spotify.get_home_feed()
     return feed.playlists or {}
   elseif operation == "playlist" then
-    local playlist_id = type(args) == "table" and (args.id or args.playlistId or args.playlist_id) or tostring(args or "")
-    return spotify.get_playlist(playlist_id)
+    return spotify.get_playlist(args)
   elseif operation == "playlistSongs" then
-    local playlist_id = type(args) == "table" and (args.id or args.playlistId or args.playlist_id) or tostring(args or "")
-    if not playlist_id or playlist_id == "" then
-      return {}
-    end
-    local res = spotify.get_playlist(playlist_id)
+    local res = spotify.get_playlist(args)
     return (res and res.songs) or {}
   elseif operation == "homeFeed" then
     local feed = spotify.get_home_feed()
@@ -78,15 +73,20 @@ function plugin.call(operation, args)
     local feed = spotify.get_home_feed()
     return feed.charts or {}
   elseif operation == "song" then
-    local song_id = args.id or args.songId
+    local song_id = type(args) == "table" and (args.id or args.songId) or tostring(args or "")
     return {
       id = song_id,
       provider = "spotube"
     }
   elseif operation == "stream" then
     local res, err = stream.resolve_stream(args)
-    if not res then
-      error(err or "Failed to resolve stream", 0)
+    if not res or type(res) ~= "table" or not res.url then
+      return {
+        error = {
+          code = 404,
+          message = err or "暂无可用音频流"
+        }
+      }
     end
     return res
   elseif operation == "lyrics" then
@@ -94,6 +94,16 @@ function plugin.call(operation, args)
     local artist = args.artist
     local album = args.album
     local duration = args.duration or (args.durationMs and (args.durationMs / 1000))
+    local song_id = args.id or args.songId
+    if (not title or title == "") and song_id then
+      local meta = require("spotube.core.store").get_track_meta(song_id)
+      if meta then
+        title = meta.title or meta.name
+        artist = artist or meta.artist
+        album = album or meta.albumName
+        duration = duration or (meta.durationMs and (meta.durationMs / 1000))
+      end
+    end
     local res = lyrics.get_lyrics(title, artist, album, duration)
     if not res or not res.lines or #res.lines == 0 then
       return { lines = {} }

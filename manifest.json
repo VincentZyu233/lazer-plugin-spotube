@@ -35,6 +35,8 @@
       "music.youtube.com",
       "www.youtube.com",
       "youtube.com",
+      "*.piped.private.coffee",
+      "pipedapi.kavin.rocks",
       "lrclib.net"
     ],
     "socketServer": [
