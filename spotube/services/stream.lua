@@ -167,10 +167,19 @@ end
 
 --- 通过 VisionOS 协议提取 YouTube 原生免加密直链
 local function extract_player_stream(video_id)
+  local visitor = ensure_visitor_data()
+  local client_ctx = {}
+  for k, v in pairs(constants.CLIENT_VISIONOS) do
+    if k ~= "userAgent" then client_ctx[k] = v end
+  end
+  if visitor and string.len(visitor) > 0 then
+    client_ctx.visitorData = visitor
+  end
+
   local url = constants.HOST_YOUTUBE .. "/youtubei/v1/player?prettyPrint=false"
   local payload = {
     context = {
-      client = constants.CLIENT_VISIONOS
+      client = client_ctx
     },
     videoId = video_id,
     playbackContext = {
@@ -193,6 +202,9 @@ local function extract_player_stream(video_id)
     ["X-YouTube-Client-Name"] = "101",
     ["X-YouTube-Client-Version"] = "1.02"
   }
+  if visitor and string.len(visitor) > 0 then
+    headers["X-Goog-Visitor-Id"] = visitor
+  end
 
   local res = http.post(url, payload, headers)
   if res and type(res) == "table" and res.streamingData and res.streamingData.adaptiveFormats then
@@ -200,7 +212,7 @@ local function extract_player_stream(video_id)
     for _, fmt in ipairs(res.streamingData.adaptiveFormats) do
       local mime = fmt.mimeType or ""
       if string.find(mime, "audio/") and fmt.url and string.len(fmt.url) > 0 then
-        if fmt.itag == 250 or fmt.itag == 140 then
+        if fmt.itag == 140 or fmt.itag == 251 then
           chosen = fmt
           break
         elseif not chosen then
@@ -210,11 +222,13 @@ local function extract_player_stream(video_id)
     end
 
     if chosen and chosen.url then
+      local mime = chosen.mimeType or "audio/mp4"
+      local suffix = (string.find(mime, "opus") or string.find(mime, "webm")) and "opus" or "m4a"
       return {
         url = chosen.url,
         bitRate = chosen.bitrate or 128000,
-        suffix = string.find(chosen.mimeType or "", "opus") and "opus" or "m4a",
-        contentType = chosen.mimeType or "audio/mp4",
+        suffix = suffix,
+        contentType = mime,
         size = tonumber(chosen.contentLength) or 0,
         transcoded = false,
         headers = {

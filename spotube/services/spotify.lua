@@ -17,6 +17,12 @@ local function current_time_seconds()
       return math.floor(ms / 1000)
     end
   end
+  if type(_now) == "function" then
+    local ok, ms = pcall(_now)
+    if ok and type(ms) == "number" and ms > 0 then
+      return math.floor(ms / 1000)
+    end
+  end
   if type(os) == "table" and type(os.time) == "function" then
     local ok, s = pcall(os.time)
     if ok and type(s) == "number" and s > 0 then
@@ -51,12 +57,16 @@ function spotify_service.ensure_token()
   local cached_exp = store.get("sp_token_exp") or 0
   local now_s = current_time_seconds()
 
-  if cached_token and cached_exp > (now_s + 60) then
-    return cached_token
+  -- 1. 优先复用有效期内的已有 Token
+  if cached_token and string.len(tostring(cached_token)) > 20 then
+    if now_s == 0 or cached_exp > (now_s + 60) then
+      return cached_token
+    end
   end
 
   local sp_dc = store.get("sp_dc")
-  local totp_code = crypto.generate_totp(DEFAULT_TOTP_SECRET, now_s, 30, 6)
+  local totp_time = now_s > 0 and now_s or (cached_exp > 0 and (cached_exp - 1800) or 1795730121)
+  local totp_code = crypto.generate_totp(DEFAULT_TOTP_SECRET, totp_time, 30, 6)
   local token_url = constants.HOST_SPOTIFY .. "/api/token?reason=init&productType=web-player" ..
                     "&totp=" .. tostring(totp_code) ..
                     "&totpServer=unavailable" ..
@@ -80,9 +90,14 @@ function spotify_service.ensure_token()
     if expires_in then
       store.set("sp_token_exp", math.floor(expires_in / 1000))
     else
-      store.set("sp_token_exp", now_s + 3600)
+      store.set("sp_token_exp", (now_s > 0 and now_s or 1795730121) + 2700)
     end
     return res.accessToken
+  end
+
+  -- 2. 网络或凭证异常时，回退使用既有 Token 兜底
+  if cached_token and string.len(tostring(cached_token)) > 20 then
+    return cached_token
   end
 
   return nil

@@ -26,12 +26,30 @@ function store.save_track_meta(track_id, meta)
   local cid = store.clean_id(track_id)
   store._track_meta[tostring(track_id)] = meta
   store._track_meta[cid] = meta
+  -- 同步持久化至宿主 Storage，防止跨任务或 isolate 重启后元数据丢失
+  pcall(function()
+    store.set("meta:" .. cid, {
+      id = cid,
+      title = meta.title or meta.name,
+      artist = meta.artist or (meta.artists and meta.artists[1] and meta.artists[1].name),
+      durationMs = meta.durationMs,
+      albumName = meta.albumName or meta.album,
+      coverUrl = meta.coverUrl or meta.cover
+    })
+  end)
 end
 
 function store.get_track_meta(track_id)
   if not track_id then return nil end
   local cid = store.clean_id(track_id)
-  return store._track_meta[cid] or store._track_meta[tostring(track_id)]
+  local m = store._track_meta[cid] or store._track_meta[tostring(track_id)]
+  if m then return m end
+  local persisted = store.get("meta:" .. cid)
+  if persisted and type(persisted) == "table" and (persisted.title or persisted.name) then
+    store._track_meta[cid] = persisted
+    return persisted
+  end
+  return nil
 end
 
 function store.get(key)
