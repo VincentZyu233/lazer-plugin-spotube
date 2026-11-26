@@ -23,9 +23,9 @@ function plugin.call(operation, args)
         {
           id = "spotube",
           name = "Spotube",
-          auth = { "cookie" },
+          auth = { "qr", "cookie" },
           capabilities = CAPABILITIES,
-          loginHint = "在浏览器中登录 open.spotify.com，按 F12 -> 应用程序(Application) -> Cookie 复制 sp_dc 的值粘贴至此处即可（支持免费和会员账号）。",
+          loginHint = "支持在浏览器中授权登录 Spotify，亦可运行 tools/get_cookie 自动秒登或直接粘贴 sp_dc 凭据。",
           cookieHint = "直接粘贴 sp_dc 的内容（如 AQB...）或整段 Cookie"
         }
       }
@@ -35,6 +35,12 @@ function plugin.call(operation, args)
   elseif operation == "loginCookie" then
     local cookie_str = args.cookie or args.value
     return auth.login_cookie(cookie_str, spotify)
+  elseif operation == "qrKey" then
+    return auth.qrKey()
+  elseif operation == "qrUrl" then
+    return auth.qrUrl(args)
+  elseif operation == "qrCheck" then
+    return auth.qrCheck(args, spotify)
   elseif operation == "logout" then
     return auth.logout()
   elseif operation == "search" then

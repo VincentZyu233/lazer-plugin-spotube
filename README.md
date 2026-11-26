@@ -6,20 +6,21 @@
 
 专为 [**Lazer**](https://github.com/chuxuehaocai/Lazer) 现代跨平台音乐播放器打造的 **Spotube (Spotify) 混合架构扩展插件**。
 
-无需注册或登录 Spotify 账号、无需购买 Premium 会员，直接将 **Spotify 全球公共曲库、官方榜单与算法精选歌单** 无缝融入 Lazer！
+支持免登录访客体验，更深度支持**浏览器联动登录**与**全自动凭据注入工具**，直接将 **Spotify 全球曲库、官方榜单、个人歌单与算法精选** 无缝融入 Lazer！
 
 ---
 
 ## ✨ 特性亮点
 
+- **浏览器一键联动登录（Dual-Mode Auth）**：
+  - **原生网页/扫码授权**：在 Lazer 登录弹窗中点击【在浏览器中打开授权页】直接唤起系统默认浏览器登录 Spotify。
+  - **全自动凭据抓取与实时注入（tools/get_cookie.js & tools/login.bat）**：配套提供纯原生 Node.js 自动化助手，双击即可拉起浏览器窗口完成登录，通过 CDP 协议自动提取 `sp_dc` 凭据，通过本地 Socket (`127.0.0.1:28795`) 实时通知 Lazer 客户端秒速完成登录并自动关闭弹窗！
+  - **传统 Cookie 模式**：亦可直接在 Cookie 标签页粘贴 `sp_dc` 的值完成快速鉴权。
 - **全球公共曲库全域检索**：
-  - 深度逆向 Spotify 官方公开 Web 端点，支持单曲、艺人、专辑、公共歌单全域检索。
+  - 深度逆向 Spotify 官方端点，支持单曲、艺人、专辑、公共歌单全域检索。
   - **歌单链接直接秒开**：支持在 Lazer 搜索框直接粘贴任意公开 Spotify 歌单链接（`open.spotify.com/playlist/...`）一键载入整张歌单。
-- **免登录即开即用（Zero Account Burden）**：
-  - 前端元数据走 Spotify 匿名访客通道，免 Cookie、免 Key、免注册。
-  - 后端音频流走移动端访客流调度，免 Google 账号登录。
 - **Spotube 原生置信度智能转接（Confidence Matcher）**：
-  - 核心算法严格对齐 [team-spotube/spotube](https://github.com/team-spotube/spotube) 官方 `RealNewPipeAudioAPI` 实现。
+  - 核心算法严格对齐 [team-spotube/spotube](https://github.com/team-spotube/spotube) 官方实现。
   - 结合**核心标题归一化、艺人交叉比对、$\le 10s$ 录音室原版时长容差**以及 **YouTube 官方 "- Topic" 纯音频频道优先** 规则进行多重加权打分，精准消除 MV 杂音与翻唱干扰。
 - **免 DRM 高保真直链流（Anti-Throttling Stream）**：
   - 智能调度未加密的 128kbps AAC / Opus 裸音频流，无需复杂的 Widevine 解密模块，保持插件仅 **数十 KB** 的极简轻量包体。
@@ -28,9 +29,26 @@
 
 ---
 
+## 🔐 登录体验与配套工具 (Authentication)
+
+Spotify 采用严格的 HttpOnly Cookie (`sp_dc`) 进行 Web 播放鉴权。本插件提供两种极简的登录体验：
+
+### 方案 A：Lazer 客户端原生浏览器授权联动
+1. 在 Lazer 左侧进入 **登录** → 音乐平台选择 **Spotube**；
+2. 弹窗内会展示登录二维码以及【在浏览器中打开授权页】按钮；
+3. 点击按钮在浏览器中登录 Spotify；配合 `tools/get_cookie.js` 助手，插件会在检测到凭据后自动完成登录交接并关闭弹窗！
+
+### 方案 B：一键助手自动注入 (默认推荐)
+1. 进入插件目录下的 `tools/` 文件夹；
+2. **Windows 用户**：直接双击运行 `login.bat`；
+   **跨平台命令行**：运行 `node tools/get_cookie.js`；
+3. 脚本会自动拉起独立的浏览器窗口引导登录；登录成功后，脚本会自动提取 `sp_dc`、解析用户身份、注入到 Lazer 插件存储，并通知 Lazer 客户端自动完成登录！
+
+---
+
 ## 🛠 架构原理解析 (Architecture)
 
-本插件借鉴了开源顶流播放器 **Spotube** 的经典设计，采用双轨互补分层架构：
+本插件借鉴了开源播放器 **Spotube** 的经典设计，采用双轨互补分层架构：
 
 ```mermaid
 flowchart LR
@@ -38,13 +56,19 @@ flowchart LR
         Search["全域搜索 / 粘贴歌单链接"]
         Cards["官方榜单 / 推荐歌单广场"]
         Player["原生播放引擎"]
+        AuthModal["原生登录弹窗<br/>(扫码/浏览器授权/Cookie)"]
     end
 
     subgraph SpotubePlugin["lazer-plugin-spotube 核心层"]
-        Meta["Spotify 公开端点 (SpotAPI)<br/>获取优质元数据与专辑封面"]
+        Meta["Spotify 官方端点<br/>(sp_dc 登录态 / TOTP 动态签名)"]
         Matcher["Spotube 置信度打分算法<br/>(时长容差 + 官方 Topic 频道加权)"]
         Streamer["InnerTube 直链流调度器<br/>(免 DRM 裸流提取)"]
         Lyrics["LRCLib 逐行同步歌词"]
+        AuthServer["本地 Socket 服务<br/>(127.0.0.1:28795 登录态握手)"]
+    end
+
+    subgraph Tools["配套桌面工具"]
+        GetCookie["tools/get_cookie.js<br/>CDP 浏览器凭据自动监听"]
     end
 
     Search --> Meta
@@ -54,20 +78,16 @@ flowchart LR
     Player -->|resolve(song)| Matcher
     Matcher --> Streamer
     Streamer -->|128k AAC/Opus 裸流| Player
+
+    AuthModal <-->|本地 Socket 握手| AuthServer
+    GetCookie -->|CDP 监听捕获| AuthServer
 ```
 
 ---
 
-## 📦 安装与使用指南
+## 📦 安装与构建指南
 
-### 方式一：Release ZIP 导入（推荐）
-
-1. 从本仓库的 [Releases](../../releases) 下载最新的 `community.spotube.music.zip`。
-2. 打开 **Lazer** → **设置** → **插件管理** → **导入 ZIP 插件**，选择下载的压缩包。
-3. 列表出现「Spotube」并处于启用状态即可。
-4. 在播放器音源切换列表选择 **Spotube** 即可畅游全球曲库。
-
-### 方式二：本地构建
+### 本地构建与打包
 
 ```bash
 node tools/build.js

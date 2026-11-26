@@ -17,6 +17,7 @@
     "charts"
   ],
   "auth": [
+    "qr",
     "cookie"
   ],
   "permissions": {
@@ -33,6 +34,10 @@
       "www.youtube.com",
       "youtube.com",
       "lrclib.net"
+    ],
+    "socketServer": [
+      "127.0.0.1:28795",
+      "localhost:28795"
     ],
     "storage": true
   }
