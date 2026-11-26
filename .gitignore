@@ -3,3 +3,5 @@ dist/
 Thumbs.db
 *.tmp
 tools/cookie_backup.json
+AGENTS.local.md
+*.local.md
