@@ -1,26 +1,45 @@
+local auth = require("spotube.services.auth")
 local spotify = require("spotube.services.spotify")
 local stream = require("spotube.services.stream")
 local lyrics = require("spotube.services.lyrics")
 
 local M = {}
 
+local CAPABILITIES = {
+  "search",
+  "lyrics",
+  "playlists",
+  "browseAlbums",
+  "homeFeed",
+  "charts"
+}
+
 function M.describe()
   return {
-    id = "community.spotube.music",
-    name = "Spotube",
-    version = "0.1.0",
-    description = "基于 Spotube 架构打造的 Spotify 全球曲库插件：免登录畅享 Spotify 官方歌单与算法推荐，智能调度高保真无加密音频流。",
-    provider = "spotube",
-    apiVersion = 1,
-    capabilities = {
-      "search",
-      "lyrics",
-      "playlists",
-      "browseAlbums",
-      "homeFeed",
-      "charts"
+    providers = {
+      {
+        id = "spotube",
+        name = "Spotube",
+        auth = { "cookie" },
+        capabilities = CAPABILITIES,
+        loginHint = "在浏览器中登录 open.spotify.com，按 F12 -> 应用程序(Application) -> Cookie 复制 sp_dc 的值粘贴至此处即可（支持免费和会员账号）。",
+        cookieHint = "直接粘贴 sp_dc 的内容（如 AQB...）或整段 Cookie"
+      }
     }
   }
+end
+
+function M.session()
+  return auth.session(spotify)
+end
+
+function M.loginCookie(args)
+  local cookie_str = args and (args.cookie or args.value)
+  return auth.login_cookie(cookie_str, spotify)
+end
+
+function M.logout()
+  return auth.logout()
 end
 
 function M.search(args)
@@ -35,9 +54,14 @@ function M.playlists(args)
   return feed.playlists or {}
 end
 
+function M.playlist(args)
+  local playlist_id = type(args) == "table" and (args.id or args.playlistId) or tostring(args or "")
+  return spotify.get_playlist(playlist_id)
+end
+
 function M.playlistSongs(args)
-  local playlist_id = args and (args.id or args.playlistId)
-  if not playlist_id then
+  local playlist_id = type(args) == "table" and (args.id or args.playlistId) or tostring(args or "")
+  if not playlist_id or playlist_id == "" then
     return { songs = {} }
   end
   local res = spotify.get_playlist(playlist_id)
@@ -66,7 +90,6 @@ function M.song(args)
 end
 
 function M.stream(args)
-  -- Lazer 在点歌时传入 track 信息（包含 id, title, artist, duration 等）
   local track = args or {}
   local res, err = stream.resolve_stream(track)
   if not res then
@@ -83,19 +106,24 @@ function M.lyrics(args)
 
   local res = lyrics.get_lyrics(title, artist, album, duration)
   if not res or not res.lines or #res.lines == 0 then
-    -- 若无精确时间轴，返回状态码 70 让宿主重试或优雅占位
     return { lines = {} }
   end
   return res
 end
 
+function M.player_event(args)
+  -- 静默接收宿主广播事件
+  return nil
+end
+
 --- 插件统一分发网关
 function call(operation, args)
   local fn = M[operation]
-  if not fn then
-    error("Unsupported operation: " .. tostring(operation), 0)
+  if fn then
+    return fn(args)
   end
-  return fn(args)
+  -- 对于未知或可选操作，返回 nil 而非抛出 error，避免宿主日志爆红
+  return nil
 end
 
 return {

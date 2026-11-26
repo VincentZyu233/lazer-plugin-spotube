@@ -2,7 +2,7 @@
   "id": "community.spotube.music",
   "name": "Spotube",
   "version": "0.1.0",
-  "description": "专为 Lazer 打造的 Spotube (Spotify) 混合架构扩展插件：免登录畅享全球公共曲库、算法歌单与榜单，智能调度低延迟高保真音频流。",
+  "description": "专为 Lazer 打造的 Spotube (Spotify) 混合架构扩展插件：基于 Spotify 官方元数据与 YouTube 纯净音频流，支持 Cookie 登录与全球榜单检索。",
   "author": "VincentZyu",
   "entry": "main.lua",
   "apiVersion": 1,
@@ -16,11 +16,15 @@
     "homeFeed",
     "charts"
   ],
+  "auth": [
+    "cookie"
+  ],
   "permissions": {
     "network": [
       "open.spotify.com",
       "api.spotify.com",
       "api-partner.spotify.com",
+      "spclient.wg.spotify.com",
       "clienttoken.spotify.com",
       "*.spotifycdn.com",
       "*.scdn.co",

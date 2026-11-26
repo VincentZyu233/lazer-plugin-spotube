@@ -6,7 +6,13 @@ function store.get(key)
   if store._cache[key] ~= nil then
     return store._cache[key]
   end
-  if host and host.storage and host.storage.get then
+  if host and host.storage_get then
+    local ok, val = pcall(host.storage_get, key)
+    if ok and val ~= nil then
+      store._cache[key] = val
+      return val
+    end
+  elseif host and host.storage and host.storage.get then
     local ok, val = pcall(host.storage.get, key)
     if ok and val ~= nil then
       store._cache[key] = val
@@ -18,7 +24,9 @@ end
 
 function store.set(key, val)
   store._cache[key] = val
-  if host and host.storage and host.storage.set then
+  if host and host.storage_set then
+    pcall(host.storage_set, key, val)
+  elseif host and host.storage and host.storage.set then
     pcall(host.storage.set, key, val)
   end
 end
