@@ -19,8 +19,6 @@ function auth.session(spotify)
   end
 
   local me = spotify.get_me()
-
-  local me = spotify.get_me()
   if me and me.id then
     local avatar = ""
     if me.images and #me.images > 0 and me.images[1].url then
