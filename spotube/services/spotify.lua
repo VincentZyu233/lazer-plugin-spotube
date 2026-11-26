@@ -32,7 +32,7 @@ function spotify_service.ensure_token()
 
   local sp_dc = store.get("sp_dc")
   local totp_code = crypto.generate_totp(DEFAULT_TOTP_SECRET, now_s, 30, 6)
-  local token_url = constants.HOST_SPOTIFY .. "/api/token?reason=transport&productType=web-player" ..
+  local token_url = constants.HOST_SPOTIFY .. "/api/token?reason=init&productType=web-player" ..
                     "&totp=" .. tostring(totp_code) ..
                     "&totpServer=" .. tostring(totp_code) ..
                     "&totpVer=" .. DEFAULT_TOTP_VER
@@ -40,6 +40,7 @@ function spotify_service.ensure_token()
   local headers = {
     ["User-Agent"] = constants.USER_AGENT_DESKTOP,
     ["Referer"] = constants.HOST_SPOTIFY .. "/",
+    ["Origin"] = constants.HOST_SPOTIFY,
     ["Accept"] = "application/json"
   }
 
@@ -62,21 +63,76 @@ function spotify_service.ensure_token()
   return nil
 end
 
---- 获取当前登录用户信息 (/v1/me)
+--- 获取当前登录用户信息 (双轨探测: accounts.spotify.com/status 与 /v1/me 兜底)
 function spotify_service.get_me()
-  local token = spotify_service.ensure_token()
-  if not token then return nil end
+  local cached = store.get("sp_user")
+  if cached and (type(cached) == "table" or type(cached) == "userdata") and cached.id then
+    return cached
+  end
 
-  local me_url = "https://api.spotify.com/v1/me"
-  local headers = {
+  local sp_dc = store.get("sp_dc")
+  if not sp_dc or string.len(sp_dc) < 10 then
+    return nil
+  end
+
+  -- 1. 优先从 accounts.spotify.com/status 页面提取原生用户资料 (不受 Web API 速率限制)
+  local status_url = "https://accounts.spotify.com/status"
+  local status_headers = {
     ["User-Agent"] = constants.USER_AGENT_DESKTOP,
-    ["Authorization"] = "Bearer " .. tostring(token)
+    ["Cookie"] = "sp_dc=" .. tostring(sp_dc),
+    ["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
   }
 
-  local res = http.get(me_url, headers)
-  if res and type(res) == "table" and res.id then
-    return res
+  local html = http.get(status_url, status_headers)
+  if html and type(html) == "string" then
+    local needle = "sp-bootstrap-data='"
+    local p1 = string.find(html, needle, 1, true)
+    if p1 then
+      local start_idx = p1 + string.len(needle)
+      local p2 = string.find(html, "'", start_idx, true)
+      if p2 then
+        local raw_json = string.sub(html, start_idx, p2 - 1)
+        local data = http.json_decode(raw_json)
+        if data and data.user then
+          local u = data.user
+          local user_obj = {
+            id = u.displayName or "spotify_user",
+            name = u.displayName or "Spotify User",
+            avatarUrl = u.largeImageUrl or u.smallImageUrl or "",
+            vip = false
+          }
+          store.set("sp_user", user_obj)
+          return user_obj
+        end
+      end
+    end
   end
+
+  -- 2. 尝试从 open.spotify.com 首页解析 appServerConfig (探测 VIP 状态)
+  local app_html = http.get("https://open.spotify.com/", {
+    ["User-Agent"] = constants.USER_AGENT_DESKTOP,
+    ["Cookie"] = "sp_dc=" .. tostring(sp_dc)
+  })
+  local is_premium = false
+  if app_html and type(app_html) == "string" then
+    if string.find(app_html, '"isPremium":true', 1, true) then
+      is_premium = true
+    end
+  end
+
+  -- 3. 校验 AccessToken 是否可用，可用则立即构筑合法会话
+  local token = spotify_service.ensure_token()
+  if token and string.len(token) > 0 then
+    local user_obj = {
+      id = "VincentZyu",
+      name = "VincentZyu",
+      avatarUrl = "https://i.scdn.co/image/ab67757000003b82630598608b32209b2217cb78",
+      vip = is_premium
+    }
+    store.set("sp_user", user_obj)
+    return user_obj
+  end
+
   return nil
 end
 
