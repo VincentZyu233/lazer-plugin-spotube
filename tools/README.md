@@ -10,7 +10,6 @@
 tools/
 ├── build.js         # 插件生产环境打包构建脚本 (校验 manifest.json、计算 SHA-256、压缩 dist/community.spotube.music.zip)
 ├── get_cookie.js    # Spotify 交互式浏览器凭据 (sp_dc) 跨平台自动抓取、持久化注入与 Socket 实时通知工具
-├── login.bat        # Windows 用户一键双击登录批处理入口
 └── README.md        # 工具链详细使用说明与参数文档
 ```
 
@@ -22,10 +21,6 @@ tools/
 
 ### 1. 抓取凭据并自动注入 Lazer 本地存储（默认推荐）
 
-**Windows 用户**:
-直接双击运行 `tools/login.bat` 即可！
-
-**跨平台命令行**:
 ```bash
 node tools/get_cookie.js
 ```

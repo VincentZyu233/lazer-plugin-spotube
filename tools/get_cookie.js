@@ -215,7 +215,8 @@ function resolveLazerStoragePaths() {
     );
     // 检查本地可用的便携版路径
     const portableWin = 'D:\\Downloads\\lazer\\win\\lua_plugin_data\\' + PLUGIN_ID + '\\storage.json';
-    candidates.push(portableWin);
+    const devFlutterWin = 'E:\\SSoftwareFiles\\LazerNextgenFlutter\\lua_plugin_data\\' + PLUGIN_ID + '\\storage.json';
+    candidates.push(portableWin, devFlutterWin);
   } else if (platform === 'darwin') {
     candidates.push(
       path.join(home, 'Library', 'Application Support', 'dev.naominet.lazer', 'lua_plugin_data', PLUGIN_ID, 'storage.json'),

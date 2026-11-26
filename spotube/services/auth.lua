@@ -181,7 +181,7 @@ function auth.qrUrl(args)
     return {
       url = url,
       actionUrl = url,
-      hint = "登录后按 F12 复制 sp_dc 点击下方【使用 Cookie 登录】，或运行 tools/login.bat 自动秒登",
+      hint = "登录后按 F12 复制 sp_dc 点击下方【使用 Cookie 登录】，或运行 node tools/get_cookie.js 自动秒登",
     }
   end
 
