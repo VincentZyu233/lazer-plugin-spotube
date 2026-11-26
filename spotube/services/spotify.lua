@@ -497,12 +497,85 @@ function spotify_service.get_playlist(playlist_id)
     return { id = "", name = "歌单", title = "歌单", cover = nil, coverUrl = nil, songCount = 0, songs = {} }
   end
 
-  local token = spotify_service.ensure_token()
   local songs = {}
   local title = "Spotify 歌单"
   local cover = nil
 
-  -- 1. 优先使用 Pathfinder GQL fetchPlaylist
+  -- 1. 优先通过 open.spotify.com/embed 抓取完整歌单 (免鉴权，无 429 速率限制，不受 GQL hash 失效影响)
+  local embed_url = "https://open.spotify.com/embed/playlist/" .. tostring(clean_id)
+  local embed_res = http.get(embed_url, {
+    ["User-Agent"] = constants.USER_AGENT_DESKTOP
+  })
+  if (not embed_res or type(embed_res) ~= "string" or not string.find(embed_res, "__NEXT_DATA__", 1, true)) then
+    embed_url = "https://open.spotify.com/embed/album/" .. tostring(clean_id)
+    embed_res = http.get(embed_url, {
+      ["User-Agent"] = constants.USER_AGENT_DESKTOP
+    })
+  end
+
+  if embed_res and type(embed_res) == "string" then
+    local s_start, s_end = string.find(embed_res, '<script id="__NEXT_DATA__"[^>]*>')
+    if s_end then
+      local e_start = string.find(embed_res, "</script>", s_end + 1, true)
+      if e_start then
+        local json_text = string.sub(embed_res, s_end + 1, e_start - 1)
+        local data = http.json_decode(json_text)
+        local entity = data and data.props and data.props.pageProps and data.props.pageProps.state and data.props.pageProps.state.data and data.props.pageProps.state.data.entity
+        if entity then
+          title = entity.title or entity.name or title
+          if entity.coverArt and entity.coverArt.sources and entity.coverArt.sources[1] then
+            cover = entity.coverArt.sources[1].url
+          end
+          if entity.trackList and type(entity.trackList) == "table" then
+            for _, tr in ipairs(entity.trackList) do
+              local tr_id = spotify_service.clean_id(tr.uri)
+              local tr_title = tr.title or ""
+              local tr_artist = tr.subtitle or ""
+              local tr_dur = tonumber(tr.duration) or 0
+              local song_artists = {}
+              if tr_artist ~= "" then
+                table.insert(song_artists, { id = tr_artist, name = tr_artist })
+              else
+                table.insert(song_artists, { id = "unknown", name = "未知歌手" })
+              end
+              local song_obj = {
+                id = tr_id,
+                name = tr_title,
+                title = tr_title,
+                artists = song_artists,
+                artist = tr_artist,
+                album = title,
+                albumName = title,
+                albumId = clean_id,
+                cover = cover,
+                coverUrl = cover,
+                duration = math.floor(tr_dur / 1000),
+                durationMs = tr_dur,
+                provider = "spotube"
+              }
+              store.save_track_meta(tr_id, song_obj)
+              table.insert(songs, song_obj)
+            end
+          end
+          if #songs > 0 then
+            return {
+              id = clean_id,
+              name = title,
+              title = title,
+              cover = cover,
+              coverUrl = cover,
+              songCount = #songs,
+              songs = songs
+            }
+          end
+        end
+      end
+    end
+  end
+
+  local token = spotify_service.ensure_token()
+
+  -- 2. 使用 Pathfinder GQL fetchPlaylist
   if token then
     local uri_formatted = "spotify:playlist:" .. tostring(clean_id)
 

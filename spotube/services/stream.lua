@@ -13,7 +13,6 @@ local function ensure_visitor_data()
     return cached
   end
 
-  -- 尝试从本地持久化中读取
   local url = constants.HOST_MUSIC .. "/youtubei/v1/search"
   local payload = {
     context = {
@@ -23,7 +22,9 @@ local function ensure_visitor_data()
   }
   local headers = {
     ["Content-Type"] = "application/json",
-    ["User-Agent"] = constants.CLIENT_WEB_REMIX.userAgent
+    ["User-Agent"] = constants.CLIENT_WEB_REMIX.userAgent,
+    ["Origin"] = constants.HOST_MUSIC,
+    ["Referer"] = constants.HOST_MUSIC .. "/"
   }
 
   local res = http.post(url, payload, headers)
@@ -208,22 +209,28 @@ local function extract_player_stream(video_id)
 
   local res = http.post(url, payload, headers)
   if res and type(res) == "table" and res.streamingData and res.streamingData.adaptiveFormats then
-    local chosen = nil
+    local itag_map = {}
+    local webm_list = {}
+    local m4a_list = {}
+
     for _, fmt in ipairs(res.streamingData.adaptiveFormats) do
       local mime = fmt.mimeType or ""
       if string.find(mime, "audio/") and fmt.url and string.len(fmt.url) > 0 then
-        if fmt.itag == 140 or fmt.itag == 251 then
-          chosen = fmt
-          break
-        elseif not chosen then
-          chosen = fmt
+        local itag = tonumber(fmt.itag)
+        if itag then itag_map[itag] = fmt end
+        if string.find(mime, "webm") or string.find(mime, "opus") then
+          table.insert(webm_list, fmt)
+        else
+          table.insert(m4a_list, fmt)
         end
       end
     end
 
+    local chosen = itag_map[251] or itag_map[140] or itag_map[250] or itag_map[249] or itag_map[139] or webm_list[1] or m4a_list[1]
+
     if chosen and chosen.url then
-      local mime = chosen.mimeType or "audio/mp4"
-      local suffix = (string.find(mime, "opus") or string.find(mime, "webm")) and "opus" or "m4a"
+      local mime = chosen.mimeType or "audio/webm; codecs=\"opus\""
+      local suffix = (string.find(mime, "opus") or string.find(mime, "webm")) and "webm" or "m4a"
       return {
         url = chosen.url,
         bitRate = chosen.bitrate or 128000,
@@ -237,7 +244,8 @@ local function extract_player_stream(video_id)
           ["Referer"] = constants.HOST_YOUTUBE .. "/",
           ["Range"] = "bytes=0-",
           ["Accept"] = "*/*",
-          ["Accept-Encoding"] = "identity"
+          ["Accept-Encoding"] = "identity",
+          ["Connection"] = "keep-alive"
         }
       }
     end
