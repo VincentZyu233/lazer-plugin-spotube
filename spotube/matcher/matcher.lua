@@ -5,20 +5,54 @@
 
 local matcher = {}
 
---- 字符串清洗与归一化（去除标点与多余空白，全转小写）
+--- 纯字节分词提取
+function matcher.words(str)
+  local list = {}
+  if not str then return list end
+  local len = string.len(str)
+  local start_i = nil
+  for i = 1, len do
+    local b = string.byte(str, i)
+    if b > 32 then
+      if not start_i then start_i = i end
+    else
+      if start_i then
+        table.insert(list, string.sub(str, start_i, i - 1))
+        start_i = nil
+      end
+    end
+  end
+  if start_i then
+    table.insert(list, string.sub(str, start_i, len))
+  end
+  return list
+end
+
+--- 字符串清洗与归一化（去除标点与多余空白，全转小写，避开正则缺陷）
 function matcher.normalize(str)
   if not str or type(str) ~= "string" then return "" end
   local s = string.lower(str)
-  -- 去除常见音轨后缀括号标记，如 (feat. X), [Remastered]
-  s = string.gsub(s, "%b()", " ")
-  s = string.gsub(s, "%b[]", " ")
-  -- 将非字母数字替换为空格
-  s = string.gsub(s, "[%p%c]", " ")
-  -- 合并连续空格并 trim
-  s = string.gsub(s, "%s+", " ")
-  s = string.gsub(s, "^%s+", "")
-  s = string.gsub(s, "%s+$", "")
-  return s
+  local len = string.len(s)
+  local out = {}
+  local in_paren = 0
+  for i = 1, len do
+    local b = string.byte(s, i)
+    if b == 40 or b == 91 then -- '(' or '['
+      in_paren = in_paren + 1
+    elseif b == 41 or b == 93 then -- ')' or ']'
+      if in_paren > 0 then in_paren = in_paren - 1 end
+    elseif in_paren == 0 then
+      -- 保留字母、数字与非 ASCII 字符 (如中日文字符 b > 127)
+      if (b >= 48 and b <= 57) or (b >= 97 and b <= 122) or b > 127 then
+        table.insert(out, string.char(b))
+      else
+        table.insert(out, " ")
+      end
+    end
+  end
+  local clean = table.concat(out)
+  local words = matcher.words(clean)
+  return table.concat(words, " ")
 end
 
 --- 核心词提纯
@@ -46,10 +80,10 @@ function matcher.score(track, candidate)
     confidence = confidence + 0.3
   else
     -- 分词匹配
+    local words = matcher.words(target_title)
+    local total_words = #words
     local matched_words = 0
-    local total_words = 0
-    for word in string.gmatch(target_title, "%S+") do
-      total_words = total_words + 1
+    for _, word in ipairs(words) do
       if string.find(cand_title, word, 1, true) then
         matched_words = matched_words + 1
       end

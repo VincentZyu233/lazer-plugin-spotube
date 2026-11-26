@@ -82,13 +82,17 @@ local function search_candidates(query_text)
           if runs and #runs > 0 then
             for _, r in ipairs(runs) do
               local t = r.text or ""
-              if string.find(t, ":") and string.len(t) <= 8 then
-                -- 解析时长 MM:SS
-                local m, s = string.match(t, "(%d+):(%d+)")
-                if m and s then
-                  durationMs = (tonumber(m) * 60 + tonumber(s)) * 1000
+              if string.find(t, ":", 1, true) and string.len(t) <= 8 then
+                -- 解析时长 MM:SS (避开正则转义缺陷)
+                local colon = string.find(t, ":", 1, true)
+                if colon then
+                  local m = tonumber(string.sub(t, 1, colon - 1))
+                  local s = tonumber(string.sub(t, colon + 1))
+                  if m and s then
+                    durationMs = (m * 60 + s) * 1000
+                  end
                 end
-              elseif string.len(t) > 1 and not string.find(t, "^%s*•%s*$") and uploader == "" and t ~= title then
+              elseif string.len(t) > 1 and not string.find(t, "•", 1, true) and uploader == "" and t ~= title then
                 uploader = t
               end
             end

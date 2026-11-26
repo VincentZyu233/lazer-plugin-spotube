@@ -10,11 +10,21 @@ local DEFAULT_TOTP_SECRET = ",7/*F(\"rLJ2oxaKL^f+E1xvP@N"
 local DEFAULT_TOTP_VER = "61"
 local SEARCH_DESKTOP_HASH = "db61238974d27839a136c9dc02bfdbe3fab7635f21cf85976ebff9a1ee281345"
 
+local function current_time_seconds()
+  if host and type(host.now) == "function" then
+    local ok, ms = pcall(host.now)
+    if ok and type(ms) == "number" then
+      return math.floor(ms / 1000)
+    end
+  end
+  return 0
+end
+
 --- 获取有效 AccessToken (支持登录态与 TOTP 动态签名)
 function spotify_service.ensure_token()
   local cached_token = store.get("sp_access_token")
   local cached_exp = store.get("sp_token_exp") or 0
-  local now_s = os.time()
+  local now_s = current_time_seconds()
 
   if cached_token and cached_exp > (now_s + 60) then
     return cached_token
@@ -70,18 +80,39 @@ function spotify_service.get_me()
   return nil
 end
 
---- 从 Spotify 链接或 URI 提取纯 ID 和类型
+--- 从 Spotify 链接或 URI 提取纯 ID 和类型 (避开 lua_dardo_plus 正则缺陷)
 function spotify_service.parse_link(url_or_id)
   if not url_or_id then return nil, nil end
-  local kind, id = string.match(url_or_id, "spotify:(%a+):([%w%d]+)")
-  if not kind or not id then
-    kind, id = string.match(url_or_id, "open%.spotify%.com/(%a+)/([%w%d]+)")
+  local str = tostring(url_or_id)
+
+  -- 1. spotify:playlist:xxxx 或 spotify:track:xxxx
+  if string.find(str, "spotify:", 1, true) == 1 then
+    local p1 = 9
+    local p2 = string.find(str, ":", p1, true)
+    if p2 then
+      local kind = string.sub(str, p1, p2 - 1)
+      local id = string.sub(str, p2 + 1)
+      local q = string.find(id, "?", 1, true)
+      if q then id = string.sub(id, 1, q - 1) end
+      return kind, id
+    end
   end
-  if not kind or not id then
-    id = url_or_id
-    kind = "playlist"
+
+  -- 2. open.spotify.com/playlist/xxxx
+  local open_idx = string.find(str, "open.spotify.com/", 1, true)
+  if open_idx then
+    local start_idx = open_idx + 17
+    local slash = string.find(str, "/", start_idx, true)
+    if slash then
+      local kind = string.sub(str, start_idx, slash - 1)
+      local id = string.sub(str, slash + 1)
+      local q = string.find(id, "?", 1, true)
+      if q then id = string.sub(id, 1, q - 1) end
+      return kind, id
+    end
   end
-  return kind, id
+
+  return "playlist", str
 end
 
 --- 搜索单曲与歌单 (优先采用 Pathfinder GQL，容错降级至 Web API)

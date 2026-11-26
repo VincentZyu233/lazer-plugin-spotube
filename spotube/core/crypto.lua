@@ -74,18 +74,20 @@ function crypto.sha1_raw(msg)
 end
 
 function crypto.hmac_sha1(key, message)
-  if #key > 64 then
+  local k_len = string.len(key)
+  if k_len > 64 then
     key = crypto.sha1_raw(key)
+    k_len = string.len(key)
   end
-  if #key < 64 then
-    key = key .. string.rep("\0", 64 - #key)
+  if k_len < 64 then
+    key = key .. string.rep("\0", 64 - k_len)
   end
   local o_key_pad = {}
   local i_key_pad = {}
   for i = 1, 64 do
     local b = string.byte(key, i)
-    o_key_pad[i] = string.char(b ~ 0x5c)
-    i_key_pad[i] = string.char(b ~ 0x36)
+    o_key_pad[i] = string.char(b ~ 92)
+    i_key_pad[i] = string.char(b ~ 54)
   end
   local inner = crypto.sha1_raw(table.concat(i_key_pad) .. message)
   return crypto.sha1_raw(table.concat(o_key_pad) .. inner)
@@ -93,7 +95,8 @@ end
 
 function crypto.decode_secret(secret)
   local res = {}
-  for i = 1, #secret do
+  local s_len = string.len(secret)
+  for i = 1, s_len do
     local c = string.byte(secret, i)
     local x = ((i - 1) % 33) + 9
     table.insert(res, tostring(c ~ x))
@@ -118,8 +121,8 @@ function crypto.generate_totp(secret, timestamp, step, digits)
   local counter = math.floor(timestamp / step)
   local msg = pack_be64(counter)
   local digest = crypto.hmac_sha1(key, msg)
-  local offset = string.byte(digest, 20) & 0x0F
-  local b1 = string.byte(digest, offset + 1) & 0x7F
+  local offset = string.byte(digest, 20) & 15
+  local b1 = string.byte(digest, offset + 1) & 127
   local b2 = string.byte(digest, offset + 2)
   local b3 = string.byte(digest, offset + 3)
   local b4 = string.byte(digest, offset + 4)
