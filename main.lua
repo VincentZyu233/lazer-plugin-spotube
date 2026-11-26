@@ -59,15 +59,15 @@ function plugin.call(operation, args)
     local feed = spotify.get_home_feed()
     return feed.playlists or {}
   elseif operation == "playlist" then
-    local playlist_id = type(args) == "table" and (args.id or args.playlistId) or tostring(args or "")
+    local playlist_id = type(args) == "table" and (args.id or args.playlistId or args.playlist_id) or tostring(args or "")
     return spotify.get_playlist(playlist_id)
   elseif operation == "playlistSongs" then
-    local playlist_id = type(args) == "table" and (args.id or args.playlistId) or tostring(args or "")
+    local playlist_id = type(args) == "table" and (args.id or args.playlistId or args.playlist_id) or tostring(args or "")
     if not playlist_id or playlist_id == "" then
-      return { songs = {} }
+      return {}
     end
     local res = spotify.get_playlist(playlist_id)
-    return res.songs or {}
+    return (res and res.songs) or {}
   elseif operation == "homeFeed" then
     local feed = spotify.get_home_feed()
     return {

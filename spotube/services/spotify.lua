@@ -442,11 +442,135 @@ function spotify_service.search(query_text, limit, offset)
   }
 end
 
---- 获取歌单详情与曲目
-function spotify_service.get_playlist(playlist_id)
-  if not playlist_id then return { songs = {} } end
-  local token = spotify_service.ensure_token()
+local PLAYLIST_GQL_HASH = "21ea11a6ac75a5f3e01fd365d29c18e0a4a8b7dc09f89bbb5d73910190c6acaf"
 
+--- 获取歌单详情与曲目 (优先采用官方 Pathfinder GQL，降级兼容 Web API)
+function spotify_service.get_playlist(playlist_id)
+  if not playlist_id or playlist_id == "" then
+    return { id = "", name = "歌单", title = "歌单", cover = nil, coverUrl = nil, songCount = 0, songs = {} }
+  end
+
+  local token = spotify_service.ensure_token()
+  local songs = {}
+  local title = "Spotify 歌单"
+  local cover = nil
+
+  -- 1. 优先使用 Pathfinder GQL fetchPlaylist
+  if token then
+    local uri_formatted = playlist_id
+    if string.find(uri_formatted, "spotify:playlist:", 1, true) ~= 1 then
+      uri_formatted = "spotify:playlist:" .. tostring(playlist_id)
+    end
+
+    local gql_url = constants.HOST_SPOTIFY_PARTNER .. "/pathfinder/v2/query"
+    local gql_payload = {
+      operationName = "fetchPlaylist",
+      variables = {
+        uri = uri_formatted,
+        offset = 0,
+        limit = 100,
+        enableWatchFeedEntrypoint = false
+      },
+      extensions = {
+        persistedQuery = {
+          version = 1,
+          sha256Hash = PLAYLIST_GQL_HASH
+        }
+      }
+    }
+
+    local gql_headers = {
+      ["User-Agent"] = constants.USER_AGENT_DESKTOP,
+      ["Authorization"] = "Bearer " .. tostring(token),
+      ["Content-Type"] = "application/json"
+    }
+
+    local sp_dc = store.get("sp_dc")
+    if sp_dc and string.len(sp_dc) > 0 then
+      gql_headers["Cookie"] = "sp_dc=" .. tostring(sp_dc)
+    end
+
+    local gql_res = http.post(gql_url, gql_payload, gql_headers)
+    if gql_res and type(gql_res) == "table" and gql_res.data and gql_res.data.playlistV2 then
+      local pl = gql_res.data.playlistV2
+      title = pl.name or title
+
+      if pl.images and pl.images.items and pl.images.items[1] and pl.images.items[1].sources then
+        local srcs = pl.images.items[1].sources
+        cover = srcs[1] and srcs[1].url
+      end
+
+      local content = pl.content
+      if content and content.items then
+        for _, it in ipairs(content.items) do
+          local tr = it.itemV2 and it.itemV2.data
+          if tr and tr.id then
+            local artist_names = {}
+            local song_artists = {}
+
+            local art_items = tr.artists and tr.artists.items
+            if not art_items and tr.albumOfTrack and tr.albumOfTrack.artists then
+              art_items = tr.albumOfTrack.artists.items
+            end
+
+            if art_items then
+              for _, a in ipairs(art_items) do
+                local a_name = a.profile and a.profile.name
+                if a_name then
+                  table.insert(artist_names, a_name)
+                  table.insert(song_artists, { id = a.uri or a_name, name = a_name })
+                end
+              end
+            end
+
+            if #song_artists == 0 then
+              table.insert(song_artists, { id = "unknown", name = "未知歌手" })
+            end
+
+            local tr_cover = nil
+            if tr.albumOfTrack and tr.albumOfTrack.coverArt and tr.albumOfTrack.coverArt.sources then
+              local srcs = tr.albumOfTrack.coverArt.sources
+              tr_cover = (srcs[#srcs] and srcs[#srcs].url) or (srcs[1] and srcs[1].url)
+            end
+
+            local dur_ms = (tr.duration and tr.duration.totalMilliseconds) or (tr.duration_ms or 0)
+            local album_name = (tr.albumOfTrack and tr.albumOfTrack.name) or ""
+            local album_id = (tr.albumOfTrack and tr.albumOfTrack.id) or ""
+
+            table.insert(songs, {
+              id = tr.id,
+              name = tr.name,
+              title = tr.name,
+              artists = song_artists,
+              artist = table.concat(artist_names, ", "),
+              album = album_name,
+              albumName = album_name,
+              albumId = album_id,
+              cover = tr_cover or cover,
+              coverUrl = tr_cover or cover,
+              duration = math.floor(dur_ms / 1000),
+              durationMs = dur_ms,
+              provider = "spotube"
+            })
+          end
+        end
+      end
+
+      if #songs > 0 then
+        return {
+          id = playlist_id,
+          name = title,
+          title = title,
+          cover = cover,
+          coverUrl = cover,
+          songCount = #songs,
+          songs = songs
+        }
+      end
+    end
+  end
+
+  -- 2. 降级方案：REST API (https://api.spotify.com/v1/playlists/)
   local url = "https://api.spotify.com/v1/playlists/" .. tostring(playlist_id)
   local headers = {
     ["User-Agent"] = constants.USER_AGENT_DESKTOP,
@@ -454,10 +578,6 @@ function spotify_service.get_playlist(playlist_id)
   }
 
   local res = http.get(url, headers)
-  local songs = {}
-  local title = "Spotify 歌单"
-  local cover = nil
-
   if res and type(res) == "table" then
     title = res.name or title
     if res.images and #res.images > 0 then
@@ -468,24 +588,35 @@ function spotify_service.get_playlist(playlist_id)
         local tr = it.track
         if tr and tr.id then
           local artists = {}
+          local song_artists = {}
           if tr.artists then
             for _, a in ipairs(tr.artists) do
               table.insert(artists, a.name)
+              table.insert(song_artists, { id = a.id or a.name, name = a.name })
             end
+          end
+          if #song_artists == 0 then
+            table.insert(song_artists, { id = "unknown", name = "未知歌手" })
           end
           local tr_cover = nil
           if tr.album and tr.album.images and #tr.album.images > 0 then
             tr_cover = tr.album.images[1].url
           end
+          local dur_ms = tr.duration_ms or 0
+          local album_name = (tr.album and tr.album.name) or ""
           table.insert(songs, {
             id = tr.id,
             name = tr.name,
             title = tr.name,
+            artists = song_artists,
             artist = table.concat(artists, ", "),
-            album = (tr.album and tr.album.name) or "",
+            album = album_name,
+            albumName = album_name,
+            albumId = (tr.album and tr.album.id) or "",
             cover = tr_cover or cover,
-            duration = math.floor((tr.duration_ms or 0) / 1000),
-            durationMs = tr.duration_ms or 0,
+            coverUrl = tr_cover or cover,
+            duration = math.floor(dur_ms / 1000),
+            durationMs = dur_ms,
             provider = "spotube"
           })
         end
@@ -495,15 +626,17 @@ function spotify_service.get_playlist(playlist_id)
 
   return {
     id = playlist_id,
+    name = title,
     title = title,
     cover = cover,
+    coverUrl = cover,
+    songCount = #songs,
     songs = songs
   }
 end
 
---- 获取主页推荐歌单与榜单
+--- 获取主页推荐歌单与榜单 (完整适配 Lazer 资料库契约: name, coverUrl, songCount)
 function spotify_service.get_home_feed()
-  -- 若用户已登录，优先返回用户歌单
   local token = spotify_service.ensure_token()
   local sp_dc = store.get("sp_dc")
   local playlists = {}
@@ -520,35 +653,59 @@ function spotify_service.get_home_feed()
         if p.images and #p.images > 0 then
           p_cover = p.images[1].url
         end
+        local p_count = p.tracks and p.tracks.total or 0
         table.insert(playlists, {
           id = p.id,
+          name = p.name or "我的歌单",
           title = p.name or "我的歌单",
           cover = p_cover,
-          trackCount = p.tracks and p.tracks.total or 0,
+          coverUrl = p_cover,
+          songCount = p_count,
+          trackCount = p_count,
+          isFavorites = false,
+          writable = false,
           provider = "spotube"
         })
       end
     end
   end
 
-  -- 公共官方精选榜单
+  -- 公共官方精选榜单 (预置规范字段)
   local charts = {
     {
       id = "37i9dQZEVXbMDoHDwVN2tF",
+      name = "Top 50 - Global (全球五十佳)",
       title = "Top 50 - Global (全球五十佳)",
       cover = "https://charts-images.scdn.co/assets/locale_en/regional/daily/region_global_default.jpg",
+      coverUrl = "https://charts-images.scdn.co/assets/locale_en/regional/daily/region_global_default.jpg",
+      songCount = 50,
+      trackCount = 50,
+      isFavorites = false,
+      writable = false,
       provider = "spotube"
     },
     {
       id = "37i9dQZEVXbLRQDuF5jeBp",
+      name = "Top 50 - USA (美国五十佳)",
       title = "Top 50 - USA (美国五十佳)",
       cover = "https://charts-images.scdn.co/assets/locale_en/regional/daily/region_us_default.jpg",
+      coverUrl = "https://charts-images.scdn.co/assets/locale_en/regional/daily/region_us_default.jpg",
+      songCount = 50,
+      trackCount = 50,
+      isFavorites = false,
+      writable = false,
       provider = "spotube"
     },
     {
       id = "37i9dQZEVXbKXQ4mDTEBXq",
+      name = "Top 50 - Japan (日本五十佳)",
       title = "Top 50 - Japan (日本五十佳)",
       cover = "https://charts-images.scdn.co/assets/locale_en/regional/daily/region_jp_default.jpg",
+      coverUrl = "https://charts-images.scdn.co/assets/locale_en/regional/daily/region_jp_default.jpg",
+      songCount = 50,
+      trackCount = 50,
+      isFavorites = false,
+      writable = false,
       provider = "spotube"
     }
   }
