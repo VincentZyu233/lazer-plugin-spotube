@@ -2,3 +2,4 @@ dist/
 .DS_Store
 Thumbs.db
 *.tmp
+tools/cookie_backup.json

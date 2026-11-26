@@ -28,11 +28,13 @@ const PLUGIN_ID = MANIFEST.id || 'community.spotube.music';
 
 function parseArgs() {
   const args = process.argv.slice(2);
+  const envProxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy || null;
   const options = {
     quitAfterDone: false,
     skipStorage: false,
     backup: false,
     browserPath: null,
+    proxy: envProxy,
     port: 0,
     url: 'https://accounts.spotify.com/zh-CN/login',
     timeout: 300,
@@ -49,6 +51,8 @@ function parseArgs() {
       options.backup = true;
     } else if (arg === '-p' || arg === '--browser-path') {
       options.browserPath = args[++i];
+    } else if (arg === '--proxy') {
+      options.proxy = args[++i];
     } else if (arg === '--port') {
       options.port = parseInt(args[++i], 10);
     } else if (arg === '--timeout') {
@@ -75,14 +79,16 @@ function showHelp() {
   -s, --skip-storage  跳过自动写入 Lazer 插件本地存储
   -q, --quit          抓取 Cookie 成功后自动关闭浏览器窗口 (默认保持打开)
   -p, --browser-path  指定浏览器可执行文件路径 (默认自动探测 Chrome / Edge)
+  --proxy <url>       指定网络代理 (默认自动读取 HTTP_PROXY / HTTPS_PROXY 环境变量)
   --port <port>       指定调试端口 (默认自动分配空闲端口)
   --timeout <sec>     等待登录超时时间 (秒，默认 300)
   -h, --help          查看本帮助信息
 
 示例:
-  node tools/get_cookie.js            # 抓取并自动注入 Lazer 插件存储 + 通知 Lazer 客户端
-  node tools/get_cookie.js -s         # 仅抓取并复制到剪贴板，不写入 Lazer 存储
-  node tools/get_cookie.js -q         # 抓取完成后自动关闭浏览器
+  node tools/get_cookie.js                         # 抓取并自动注入 Lazer 插件存储 + 通知 Lazer 客户端
+  node tools/get_cookie.js --proxy 127.0.0.1:7890 # 指定通过本地代理访问
+  node tools/get_cookie.js -s                      # 仅抓取并复制到剪贴板，不写入 Lazer 存储
+  node tools/get_cookie.js -q                      # 抓取完成后自动关闭浏览器
 `);
 }
 
@@ -557,16 +563,26 @@ async function main() {
   if (!fs.existsSync(profileDir)) fs.mkdirSync(profileDir, { recursive: true });
 
   console.log(`[*] 临时用户配置目录: ${profileDir}`);
-  console.log(`[*] 启动浏览器中...`);
+  if (options.proxy) {
+    console.log(`[*] 网络代理: ${options.proxy}`);
+  }
 
-  const browserProcess = spawn(browserPath, [
+  const chromeArgs = [
     `--remote-debugging-port=${port}`,
     `--user-data-dir=${profileDir}`,
     '--no-first-run',
     '--no-default-browser-check',
     '--window-size=1080,780',
     options.url
-  ], {
+  ];
+
+  if (options.proxy) {
+    chromeArgs.push(`--proxy-server=${options.proxy}`);
+  }
+
+  console.log(`[*] 启动浏览器中...`);
+
+  const browserProcess = spawn(browserPath, chromeArgs, {
     detached: false,
     stdio: 'ignore'
   });
