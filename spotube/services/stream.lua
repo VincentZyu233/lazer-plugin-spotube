@@ -288,13 +288,14 @@ function stream_service.resolve_stream(args)
     end
   end
 
-  -- 2. 依然缺失时，从 Spotify 实时反查单曲资料
-  if (title == "" or artist == "") and clean_id ~= "" then
-    local detail = spotify.get_track_detail(clean_id)
-    if detail then
-      title = detail.title or ""
-      artist = detail.artist or ""
-      durationMs = detail.durationMs or 0
+  -- 2. 补全曲目信息与真实专辑封面 (方案 A：抓取真实 640x640 独立专辑封面)
+  local track_detail = nil
+  if clean_id ~= "" then
+    track_detail = spotify.get_track_detail(clean_id)
+    if track_detail then
+      if title == "" then title = track_detail.title or "" end
+      if artist == "" then artist = track_detail.artist or "" end
+      if durationMs == 0 then durationMs = track_detail.durationMs or 0 end
     end
   end
 
@@ -336,6 +337,14 @@ function stream_service.resolve_stream(args)
   local stream_res, err = extract_player_stream(best_cand.id)
   if not stream_res then
     return nil, err or "提取音频直链失败"
+  end
+
+  if track_detail and track_detail.coverUrl then
+    stream_res.cover = track_detail.coverUrl
+    stream_res.coverUrl = track_detail.coverUrl
+  elseif best_cand and best_cand.cover then
+    stream_res.cover = best_cand.cover
+    stream_res.coverUrl = best_cand.cover
   end
 
   -- 6. 存入直链缓存并返回

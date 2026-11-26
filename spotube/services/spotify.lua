@@ -51,38 +51,64 @@ function spotify_service.clean_id(raw_id)
   return str
 end
 
---- 获取有效 AccessToken (支持登录态与 TOTP 动态签名)
-function spotify_service.ensure_token()
+--- 获取有效 AccessToken (双轨：优先通过 open.spotify.com/embed 提取免 TOTP 的官方签发 Token，支持登录态 Cookie)
+function spotify_service.ensure_token(force_refresh)
   local cached_token = store.get("sp_access_token")
   local cached_exp = store.get("sp_token_exp") or 0
   local now_s = current_time_seconds()
 
-  -- 1. 优先复用有效期内的已有 Token
-  if cached_token and string.len(tostring(cached_token)) > 20 then
-    if now_s == 0 or cached_exp > (now_s + 60) then
+  -- 1. 优先复用有效期内的已有 Token (若请求强制刷新则直接跳过)
+  if not force_refresh and cached_token and string.len(tostring(cached_token)) > 20 then
+    if now_s > 0 and cached_exp > (now_s + 180) then
+      return cached_token
+    elseif now_s == 0 and cached_exp > 0 then
       return cached_token
     end
   end
 
   local sp_dc = store.get("sp_dc")
+  local headers = {
+    ["User-Agent"] = constants.USER_AGENT_DESKTOP
+  }
+  if sp_dc and string.len(sp_dc) > 0 then
+    headers["Cookie"] = "sp_dc=" .. tostring(sp_dc)
+  end
+
+  -- 2. 通过 open.spotify.com/embed 提取免 TOTP 的官方签发 Token (不受 TOTP 接口停用影响)
+  local embed_url = "https://open.spotify.com/embed/playlist/37i9dQZEVXbMDoHDwVN2tF"
+  local embed_res = http.get(embed_url, headers)
+  if embed_res and type(embed_res) == "string" then
+    local tag_start = string.find(embed_res, '<script id="__NEXT_DATA__"', 1, true)
+    if tag_start then
+      local tag_close = string.find(embed_res, ">", tag_start, true)
+      if tag_close then
+        local e_start = string.find(embed_res, "</script>", tag_close + 1, true)
+        if e_start then
+          local json_text = string.sub(embed_res, tag_close + 1, e_start - 1)
+          local data = http.json_decode(json_text)
+          local session = data and data.props and data.props.pageProps and data.props.pageProps.state and data.props.pageProps.state.settings and data.props.pageProps.state.settings.session
+          if session and session.accessToken and string.len(session.accessToken) > 20 then
+            store.set("sp_access_token", session.accessToken)
+            local exp_ms = tonumber(session.accessTokenExpirationTimestampMs)
+            if exp_ms and exp_ms > 0 then
+              store.set("sp_token_exp", math.floor(exp_ms / 1000))
+            else
+              store.set("sp_token_exp", (now_s > 0 and now_s or 1795730121) + 2700)
+            end
+            return session.accessToken
+          end
+        end
+      end
+    end
+  end
+
+  -- 3. 旧 TOTP 端点兼容兜底
   local totp_time = now_s > 0 and now_s or (cached_exp > 0 and (cached_exp - 1800) or 1795730121)
   local totp_code = crypto.generate_totp(DEFAULT_TOTP_SECRET, totp_time, 30, 6)
   local token_url = constants.HOST_SPOTIFY .. "/api/token?reason=init&productType=web-player" ..
                     "&totp=" .. tostring(totp_code) ..
                     "&totpServer=unavailable" ..
                     "&totpVer=" .. DEFAULT_TOTP_VER
-
-  local headers = {
-    ["User-Agent"] = constants.USER_AGENT_DESKTOP,
-    ["Referer"] = constants.HOST_SPOTIFY .. "/",
-    ["Origin"] = constants.HOST_SPOTIFY,
-    ["Accept"] = "application/json"
-  }
-
-  if sp_dc and string.len(sp_dc) > 0 then
-    headers["Cookie"] = "sp_dc=" .. tostring(sp_dc)
-  end
-
   local res = http.get(token_url, headers)
   if res and type(res) == "table" and res.accessToken then
     store.set("sp_access_token", res.accessToken)
@@ -95,7 +121,7 @@ function spotify_service.ensure_token()
     return res.accessToken
   end
 
-  -- 2. 网络或凭证异常时，回退使用既有 Token 兜底
+  -- 4. 回退既有 Token
   if cached_token and string.len(tostring(cached_token)) > 20 then
     return cached_token
   end
@@ -278,6 +304,15 @@ function spotify_service.search(query_text, limit, offset)
     end
 
     local gql_res = http.post(gql_url, gql_payload, gql_headers)
+    if not gql_res or type(gql_res) ~= "table" or not gql_res.data or not gql_res.data.searchV2 then
+      -- Token 可能已过期或失效，强制重新从 Embed 抓取 Token 并重试一次
+      local fresh_token = spotify_service.ensure_token(true)
+      if fresh_token and fresh_token ~= token then
+        token = fresh_token
+        gql_headers["Authorization"] = "Bearer " .. tostring(token)
+        gql_res = http.post(gql_url, gql_payload, gql_headers)
+      end
+    end
     if gql_res and type(gql_res) == "table" and gql_res.data and gql_res.data.searchV2 then
       local searchV2 = gql_res.data.searchV2
       local search_artists = {}
@@ -540,6 +575,13 @@ function spotify_service.get_playlist(playlist_id)
               else
                 table.insert(song_artists, { id = "unknown", name = "未知歌手" })
               end
+              -- 方案 A：单曲封面优先采用历史缓存的真实独立封面；若未缓存则置 nil，使用 Lazer 原生占位符，绝不污染使用歌单大封面
+              local prev_meta = store.get_track_meta(tr_id)
+              local track_cover = nil
+              if prev_meta and prev_meta.coverUrl and prev_meta.coverUrl ~= "" and prev_meta.coverUrl ~= cover then
+                track_cover = prev_meta.coverUrl
+              end
+
               local song_obj = {
                 id = tr_id,
                 name = tr_title,
@@ -549,8 +591,8 @@ function spotify_service.get_playlist(playlist_id)
                 album = title,
                 albumName = title,
                 albumId = clean_id,
-                cover = cover,
-                coverUrl = cover,
+                cover = track_cover,
+                coverUrl = track_cover,
                 duration = math.floor(tr_dur / 1000),
                 durationMs = tr_dur,
                 provider = "spotube"
@@ -844,54 +886,125 @@ function spotify_service.get_home_feed()
   }
 end
 
---- 根据 Spotify Track ID 查询单曲详情与艺术家
+--- 根据 Spotify Track ID 查询单曲详情与真实专辑封面 (方案 A：通过 open.spotify.com/embed/track/<id> 抓取官方 visualIdentity 640x640 独立专辑封面)
 function spotify_service.get_track_detail(track_id)
   local pure_id = spotify_service.clean_id(track_id)
   if not pure_id or pure_id == "" then return nil end
 
-  local token = spotify_service.ensure_token()
-  local url = "https://api.spotify.com/v1/tracks/" .. tostring(pure_id)
-  local headers = {
-    ["User-Agent"] = constants.USER_AGENT_DESKTOP
-  }
-  if token then
-    headers["Authorization"] = "Bearer " .. tostring(token)
+  local cached_meta = store.get_track_meta(pure_id)
+  if cached_meta and cached_meta.coverUrl and cached_meta.coverUrl ~= "" then
+    return cached_meta
   end
 
-  local res = http.get(url, headers)
-  if res and type(res) == "table" and res.name then
-    local artist_names = {}
-    local song_artists = {}
-    if res.artists then
-      for _, a in ipairs(res.artists) do
-        table.insert(artist_names, a.name)
-        table.insert(song_artists, { id = a.id or a.name, name = a.name, coverUrl = "" })
+  -- 1. 方案 A：从 open.spotify.com/embed/track/<pure_id> 免鉴权直接抓取官方 640x640 独立专辑封面与完整曲目元数据
+  local embed_url = "https://open.spotify.com/embed/track/" .. tostring(pure_id)
+  local embed_res = http.get(embed_url, {
+    ["User-Agent"] = constants.USER_AGENT_DESKTOP
+  })
+
+  if embed_res and type(embed_res) == "string" then
+    local tag_start = string.find(embed_res, '<script id="__NEXT_DATA__"', 1, true)
+    if tag_start then
+      local tag_close = string.find(embed_res, ">", tag_start, true)
+      if tag_close then
+        local e_start = string.find(embed_res, "</script>", tag_close + 1, true)
+        if e_start then
+          local json_text = string.sub(embed_res, tag_close + 1, e_start - 1)
+          local data = http.json_decode(json_text)
+          local entity = data and data.props and data.props.pageProps and data.props.pageProps.state and data.props.pageProps.state.data and data.props.pageProps.state.data.entity
+          if entity then
+            local title = entity.title or entity.name or (cached_meta and cached_meta.title) or ""
+            local dur_ms = tonumber(entity.duration) or (cached_meta and cached_meta.durationMs) or 0
+            local artist_names = {}
+            local song_artists = {}
+            if entity.artists and type(entity.artists) == "table" then
+              for _, a in ipairs(entity.artists) do
+                local a_name = a.name
+                if a_name and a_name ~= "" then
+                  table.insert(artist_names, a_name)
+                  table.insert(song_artists, { id = a.uri or a_name, name = a_name })
+                end
+              end
+            end
+            local artist_str = table.concat(artist_names, ", ")
+            if artist_str == "" and cached_meta then
+              artist_str = cached_meta.artist or ""
+              song_artists = cached_meta.artists or {}
+            end
+
+            local cover_url = nil
+            if entity.visualIdentity and entity.visualIdentity.image and type(entity.visualIdentity.image) == "table" then
+              local imgs = entity.visualIdentity.image
+              if #imgs > 0 and imgs[#imgs].url then
+                cover_url = imgs[#imgs].url
+              end
+            end
+
+            local track_obj = {
+              id = pure_id,
+              name = title,
+              title = title,
+              artists = song_artists,
+              artist = artist_str,
+              albumName = (cached_meta and cached_meta.albumName) or "",
+              albumId = (cached_meta and cached_meta.albumId) or "",
+              cover = cover_url,
+              coverUrl = cover_url,
+              duration = math.floor(dur_ms / 1000),
+              durationMs = dur_ms,
+              provider = "spotube"
+            }
+            store.save_track_meta(pure_id, track_obj)
+            return track_obj
+          end
+        end
       end
     end
-    local cover = nil
-    if res.album and res.album.images and res.album.images[1] then
-      cover = res.album.images[1].url
-    end
-    local dur_ms = res.duration_ms or 0
-    local track_obj = {
-      id = res.id or pure_id,
-      name = res.name,
-      title = res.name,
-      artists = song_artists,
-      artist = table.concat(artist_names, ", "),
-      albumName = res.album and res.album.name or "",
-      albumId = res.album and res.album.id or "",
-      cover = cover,
-      coverUrl = cover,
-      duration = math.floor(dur_ms / 1000),
-      durationMs = dur_ms,
-      provider = "spotube"
-    }
-    store.save_track_meta(pure_id, track_obj)
-    return track_obj
   end
 
-  return nil
+  -- 2. 降级尝试 Web API (若 Token 有效)
+  local token = spotify_service.ensure_token()
+  if token then
+    local url = "https://api.spotify.com/v1/tracks/" .. tostring(pure_id)
+    local headers = {
+      ["User-Agent"] = constants.USER_AGENT_DESKTOP,
+      ["Authorization"] = "Bearer " .. tostring(token)
+    }
+    local res = http.get(url, headers)
+    if res and type(res) == "table" and res.name then
+      local artist_names = {}
+      local song_artists = {}
+      if res.artists then
+        for _, a in ipairs(res.artists) do
+          table.insert(artist_names, a.name)
+          table.insert(song_artists, { id = a.id or a.name, name = a.name })
+        end
+      end
+      local cover = nil
+      if res.album and res.album.images and res.album.images[1] then
+        cover = res.album.images[1].url
+      end
+      local dur_ms = res.duration_ms or 0
+      local track_obj = {
+        id = res.id or pure_id,
+        name = res.name,
+        title = res.name,
+        artists = song_artists,
+        artist = table.concat(artist_names, ", "),
+        albumName = res.album and res.album.name or "",
+        albumId = res.album and res.album.id or "",
+        cover = cover,
+        coverUrl = cover,
+        duration = math.floor(dur_ms / 1000),
+        durationMs = dur_ms,
+        provider = "spotube"
+      }
+      store.save_track_meta(pure_id, track_obj)
+      return track_obj
+    end
+  end
+
+  return cached_meta
 end
 
 return spotify_service

@@ -74,6 +74,14 @@ function plugin.call(operation, args)
     return feed.charts or {}
   elseif operation == "song" then
     local song_id = type(args) == "table" and (args.id or args.songId) or tostring(args or "")
+    local detail = spotify.get_track_detail(song_id)
+    if detail then
+      return detail
+    end
+    local cached = require("spotube.core.store").get_track_meta(song_id)
+    if cached then
+      return cached
+    end
     return {
       id = song_id,
       provider = "spotube"
