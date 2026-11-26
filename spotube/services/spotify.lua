@@ -574,6 +574,7 @@ function spotify_service.get_playlist(playlist_id)
       end
     end
   end
+end
 
   local token = spotify_service.ensure_token()
 
