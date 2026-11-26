@@ -13,11 +13,36 @@ local SEARCH_DESKTOP_HASH = "db61238974d27839a136c9dc02bfdbe3fab7635f21cf85976eb
 local function current_time_seconds()
   if host and type(host.now) == "function" then
     local ok, ms = pcall(host.now)
-    if ok and type(ms) == "number" then
+    if ok and type(ms) == "number" and ms > 0 then
       return math.floor(ms / 1000)
     end
   end
+  if type(os) == "table" and type(os.time) == "function" then
+    local ok, s = pcall(os.time)
+    if ok and type(s) == "number" and s > 0 then
+      return math.floor(s)
+    end
+  end
   return 0
+end
+
+--- 清洗实体 ID (剥离 spotube:playlist: 或复合前缀)
+function spotify_service.clean_id(raw_id)
+  local str = tostring(raw_id or "")
+  local last_colon = nil
+  local at = 1
+  while true do
+    local p = string.find(str, ":", at, true)
+    if not p then break end
+    last_colon = p
+    at = p + 1
+  end
+  if last_colon then
+    str = string.sub(str, last_colon + 1)
+  end
+  local q = string.find(str, "?", 1, true)
+  if q then str = string.sub(str, 1, q - 1) end
+  return str
 end
 
 --- 获取有效 AccessToken (支持登录态与 TOTP 动态签名)
@@ -34,7 +59,7 @@ function spotify_service.ensure_token()
   local totp_code = crypto.generate_totp(DEFAULT_TOTP_SECRET, now_s, 30, 6)
   local token_url = constants.HOST_SPOTIFY .. "/api/token?reason=init&productType=web-player" ..
                     "&totp=" .. tostring(totp_code) ..
-                    "&totpServer=" .. tostring(totp_code) ..
+                    "&totpServer=unavailable" ..
                     "&totpVer=" .. DEFAULT_TOTP_VER
 
   local headers = {
@@ -446,7 +471,12 @@ local PLAYLIST_GQL_HASH = "21ea11a6ac75a5f3e01fd365d29c18e0a4a8b7dc09f89bbb5d739
 
 --- 获取歌单详情与曲目 (优先采用官方 Pathfinder GQL，降级兼容 Web API)
 function spotify_service.get_playlist(playlist_id)
-  if not playlist_id or playlist_id == "" then
+  local raw_id = playlist_id
+  if type(playlist_id) == "table" then
+    raw_id = playlist_id.id or playlist_id.playlistId or playlist_id.playlist_id
+  end
+  local clean_id = spotify_service.clean_id(raw_id)
+  if not clean_id or clean_id == "" then
     return { id = "", name = "歌单", title = "歌单", cover = nil, coverUrl = nil, songCount = 0, songs = {} }
   end
 
@@ -457,10 +487,7 @@ function spotify_service.get_playlist(playlist_id)
 
   -- 1. 优先使用 Pathfinder GQL fetchPlaylist
   if token then
-    local uri_formatted = playlist_id
-    if string.find(uri_formatted, "spotify:playlist:", 1, true) ~= 1 then
-      uri_formatted = "spotify:playlist:" .. tostring(playlist_id)
-    end
+    local uri_formatted = "spotify:playlist:" .. tostring(clean_id)
 
     local gql_url = constants.HOST_SPOTIFY_PARTNER .. "/pathfinder/v2/query"
     local gql_payload = {
@@ -518,13 +545,13 @@ function spotify_service.get_playlist(playlist_id)
                 local a_name = a.profile and a.profile.name
                 if a_name then
                   table.insert(artist_names, a_name)
-                  table.insert(song_artists, { id = a.uri or a_name, name = a_name })
+                  table.insert(song_artists, { id = a.uri or a_name, name = a_name, coverUrl = "" })
                 end
               end
             end
 
             if #song_artists == 0 then
-              table.insert(song_artists, { id = "unknown", name = "未知歌手" })
+              table.insert(song_artists, { id = "unknown", name = "未知歌手", coverUrl = "" })
             end
 
             local tr_cover = nil
@@ -558,7 +585,7 @@ function spotify_service.get_playlist(playlist_id)
 
       if #songs > 0 then
         return {
-          id = playlist_id,
+          id = clean_id,
           name = title,
           title = title,
           cover = cover,
@@ -571,7 +598,7 @@ function spotify_service.get_playlist(playlist_id)
   end
 
   -- 2. 降级方案：REST API (https://api.spotify.com/v1/playlists/)
-  local url = "https://api.spotify.com/v1/playlists/" .. tostring(playlist_id)
+  local url = "https://api.spotify.com/v1/playlists/" .. tostring(clean_id)
   local headers = {
     ["User-Agent"] = constants.USER_AGENT_DESKTOP,
     ["Authorization"] = "Bearer " .. tostring(token or "")

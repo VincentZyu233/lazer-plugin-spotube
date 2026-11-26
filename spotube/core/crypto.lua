@@ -1,14 +1,71 @@
 -- Spotify TOTP & Cryptographic Primitives
--- Fully compliant with Dart lua_dardo_plus sandbox and Lua 5.3+ standards
+-- Fully compliant with Dart lua_dardo_plus sandbox and all Lua versions (No bitwise operators)
 local crypto = {}
 
---- 32 位循环左移
-local function rol(val, n)
-  return (((val << n) | (val >> (32 - n))) & 4294967295)
+--- 纯算术位异或运算 (Bitwise XOR without '~' operator)
+local function bxor(a, b)
+  local res = 0
+  local bit = 1
+  a = math.floor(a or 0)
+  b = math.floor(b or 0)
+  while a > 0 or b > 0 do
+    local ra = a % 2
+    local rb = b % 2
+    if ra ~= rb then
+      res = res + bit
+    end
+    a = math.floor(a / 2)
+    b = math.floor(b / 2)
+    bit = bit * 2
+  end
+  return res
 end
 
---- 纯 Lua 实现的标准 SHA-1 哈希算法
--- 彻底避开 0x 十六进制字面量与字符串 # 运算符，兼容 Dart lua_dardo_plus
+--- 纯算术位与运算 (Bitwise AND without '&' operator)
+local function band(a, b)
+  local res = 0
+  local bit = 1
+  a = math.floor(a or 0)
+  b = math.floor(b or 0)
+  while a > 0 and b > 0 do
+    if (a % 2 == 1) and (b % 2 == 1) then
+      res = res + bit
+    end
+    a = math.floor(a / 2)
+    b = math.floor(b / 2)
+    bit = bit * 2
+  end
+  return res
+end
+
+--- 纯算术位或运算 (Bitwise OR without '|' operator)
+local function bor(a, b)
+  local res = 0
+  local bit = 1
+  a = math.floor(a or 0)
+  b = math.floor(b or 0)
+  while a > 0 or b > 0 do
+    if (a % 2 == 1) or (b % 2 == 1) then
+      res = res + bit
+    end
+    a = math.floor(a / 2)
+    b = math.floor(b / 2)
+    bit = bit * 2
+  end
+  return res
+end
+
+--- 32 位循环左移 (纯算术)
+local function rol(val, n)
+  val = val % 4294967296
+  local shift1 = 2 ^ n
+  local shift2 = 2 ^ (32 - n)
+  local p1 = (val * shift1) % 4294967296
+  local p2 = math.floor(val / shift2)
+  return bor(p1, p2)
+end
+
+--- 纯 Lua 实现的标准 SHA-1 哈希算法 (纯算术兼容实现)
 function crypto.sha1_hex(msg)
   if not msg then return "" end
   msg = tostring(msg)
@@ -28,7 +85,8 @@ function crypto.sha1_hex(msg)
   end
 
   for i = 7, 0, -1 do
-    bytes[#bytes + 1] = ((bit_len >> (i * 8)) & 255)
+    local shift = 2 ^ (i * 8)
+    bytes[#bytes + 1] = math.floor(bit_len / shift) % 256
   end
 
   local h0 = 1732584193
@@ -43,11 +101,12 @@ function crypto.sha1_hex(msg)
     local w = {}
     for i = 0, 15 do
       local idx = offset + i * 4
-      w[i] = (bytes[idx + 1] << 24) | (bytes[idx + 2] << 16) | (bytes[idx + 3] << 8) | bytes[idx + 4]
+      w[i] = ((bytes[idx + 1] * 16777216) + (bytes[idx + 2] * 65536) + (bytes[idx + 3] * 256) + bytes[idx + 4]) % 4294967296
     end
 
     for i = 16, 79 do
-      w[i] = rol(w[i - 3] ~ w[i - 8] ~ w[i - 14] ~ w[i - 16], 1)
+      local x = bxor(bxor(bxor(w[i - 3], w[i - 8]), w[i - 14]), w[i - 16])
+      w[i] = rol(x, 1)
     end
 
     local a, b, c, d, e = h0, h1, h2, h3, h4
@@ -55,20 +114,20 @@ function crypto.sha1_hex(msg)
     for i = 0, 79 do
       local f, k
       if i <= 19 then
-        f = (b & c) | ((~b) & d)
+        f = bor(band(b, c), band(4294967295 - b, d))
         k = 1518500249
       elseif i <= 39 then
-        f = b ~ c ~ d
+        f = bxor(bxor(b, c), d)
         k = 1859775393
       elseif i <= 59 then
-        f = (b & c) | (b & d) | (c & d)
+        f = bor(bor(band(b, c), band(b, d)), band(c, d))
         k = 2400959708
       else
-        f = b ~ c ~ d
+        f = bxor(bxor(b, c), d)
         k = 3395469782
       end
 
-      local temp = (rol(a, 5) + f + e + k + w[i]) & 4294967295
+      local temp = (rol(a, 5) + f + e + k + w[i]) % 4294967296
       e = d
       d = c
       c = rol(b, 30)
@@ -76,11 +135,11 @@ function crypto.sha1_hex(msg)
       a = temp
     end
 
-    h0 = (h0 + a) & 4294967295
-    h1 = (h1 + b) & 4294967295
-    h2 = (h2 + c) & 4294967295
-    h3 = (h3 + d) & 4294967295
-    h4 = (h4 + e) & 4294967295
+    h0 = (h0 + a) % 4294967296
+    h1 = (h1 + b) % 4294967296
+    h2 = (h2 + c) % 4294967296
+    h3 = (h3 + d) % 4294967296
+    h4 = (h4 + e) % 4294967296
   end
 
   return string.format("%08x%08x%08x%08x%08x", h0, h1, h2, h3, h4)
@@ -110,7 +169,8 @@ function crypto.bin_to_hex(bin)
   return table.concat(out)
 end
 
---- 解码 Spotify TOTP 混淆密钥
+--- 解码 Spotify 官方 TOTP 混淆密钥 (对齐 Web Player 2026 最新内核)
+-- 公式: r = secret.split("").map((e, t) => e.charCodeAt(0) ^ (t % 33 + 9))
 function crypto.decode_secret(secret)
   if not secret then return "" end
   local res = {}
@@ -118,7 +178,7 @@ function crypto.decode_secret(secret)
   for i = 1, s_len do
     local c = string.byte(secret, i)
     local x = ((i - 1) % 33) + 9
-    table.insert(res, tostring(c ~ x))
+    table.insert(res, tostring(bxor(c, x)))
   end
   return table.concat(res)
 end
@@ -154,8 +214,8 @@ function crypto.hmac_sha1(key, msg)
     if i <= string.len(key) then
       b = string.byte(key, i)
     end
-    k_ipad[i] = string.char(b ~ 54)  -- 0x36 = 54
-    k_opad[i] = string.char(b ~ 92)  -- 0x5c = 92
+    k_ipad[i] = string.char(bxor(b, 54))  -- 0x36 = 54
+    k_opad[i] = string.char(bxor(b, 92))  -- 0x5c = 92
   end
 
   local inner = table.concat(k_ipad) .. msg
@@ -184,16 +244,15 @@ function crypto.generate_totp(secret, timestamp, step, digits)
     return "000000"
   end
 
-  local offset = (string.byte(digest, 20) & 15)
-  local b1 = (string.byte(digest, offset + 1) & 127)
+  local offset = (string.byte(digest, 20) % 16)
+  local b1 = (string.byte(digest, offset + 1) % 128)
   local b2 = string.byte(digest, offset + 2)
   local b3 = string.byte(digest, offset + 3)
   local b4 = string.byte(digest, offset + 4)
 
-  local code = (b1 << 24) | (b2 << 16) | (b3 << 8) | b4
+  local code = (b1 * 16777216) + (b2 * 65536) + (b3 * 256) + b4
   local mod = 10 ^ digits
   return string.format("%0" .. tostring(digits) .. "d", code % mod)
 end
 
 return crypto
-

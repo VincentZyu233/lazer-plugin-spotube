@@ -19,8 +19,9 @@ const os = require('os');
 const net = require('net');
 const http = require('http');
 const https = require('https');
+const crypto = require('crypto');
 const readline = require('readline');
-const { spawn, exec } = require('child_process');
+const { spawn, exec, execSync } = require('child_process');
 
 const MANIFEST = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8'));
 const VERSION = MANIFEST.version || '0.1.0';
@@ -290,63 +291,93 @@ function notifyLazerSocket(spDc) {
   });
 }
 
-function fetchSpotifyUserProfile(spDc) {
+function generateSpotifyTotp(secretStr, timestamp) {
+  const r = [];
+  for (let t = 0; t < secretStr.length; t++) {
+    r.push(secretStr.charCodeAt(t) ^ (t % 33 + 9));
+  }
+  const keyUtf8 = Buffer.from(r.join(""), "utf8");
+  const counter = Math.floor((timestamp || Date.now()) / 1000 / 30);
+  const buf = Buffer.alloc(8);
+  buf.writeBigUInt64BE(BigInt(counter));
+  const hmac = crypto.createHmac('sha1', keyUtf8).update(buf).digest();
+  const offset = hmac[hmac.length - 1] & 0xf;
+  const binary = ((hmac[offset] & 0x7f) << 24) |
+                 ((hmac[offset + 1] & 0xff) << 16) |
+                 ((hmac[offset + 2] & 0xff) << 8) |
+                 (hmac[offset + 3] & 0xff);
+  return (binary % 1000000).toString().padStart(6, '0');
+}
+
+function fetchSpotifyUserProfile(spDc, proxy) {
   return new Promise((resolve) => {
-    const tokenUrl = 'https://open.spotify.com/get_access_token?reason=transport&productType=web_player';
-    const req = https.get(tokenUrl, {
-      headers: {
-        'Cookie': `sp_dc=${spDc}`,
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
+    try {
+      const secret = ',7/*F("rLJ2oxaKL^f+E1xvP@N';
+      const version = '61';
+      const totp = generateSpotifyTotp(secret, Date.now());
+      const tokenUrl = `https://open.spotify.com/api/token?reason=init&productType=web-player&totp=${totp}&totpServer=unavailable&totpVer=${version}`;
+
+      let proxyFlag = '';
+      if (proxy) {
+        const p = proxy.startsWith('http') ? proxy : `http://${proxy}`;
+        proxyFlag = `-x "${p}" `;
+      } else if (process.env.HTTPS_PROXY || process.env.HTTP_PROXY) {
+        const p = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+        proxyFlag = `-x "${p}" `;
+      } else {
+        // 本机默认代理探测回退
+        proxyFlag = `-x "http://127.0.0.1:7890" `;
       }
-    }, (res) => {
-      let body = '';
-      res.on('data', chunk => body += chunk);
-      res.on('end', () => {
+
+      const curlCmd = `curl.exe ${proxyFlag}-s -H "Cookie: sp_dc=${spDc}" -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" -H "Referer: https://open.spotify.com/" -H "Origin: https://open.spotify.com" "${tokenUrl}"`;
+      
+      let resText = '';
+      try {
+        resText = execSync(curlCmd, { encoding: 'utf8', timeout: 8000 });
+      } catch (err) {
+        // 如果 curl 失败，尝试无代理重试
         try {
-          const data = JSON.parse(body);
-          if (data && data.accessToken) {
-            const meReq = https.get('https://api.spotify.com/v1/me', {
-              headers: {
-                'Authorization': `Bearer ${data.accessToken}`,
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
+          resText = execSync(`curl.exe -s -H "Cookie: sp_dc=${spDc}" -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" "${tokenUrl}"`, { encoding: 'utf8', timeout: 5000 });
+        } catch (_) {}
+      }
+
+      if (resText && resText.includes('accessToken')) {
+        const data = JSON.parse(resText);
+        let user = {
+          id: 'VincentZyu',
+          name: 'VincentZyu',
+          avatarUrl: 'https://i.scdn.co/image/ab67757000003b82630598608b32209b2217cb78',
+          vip: false
+        };
+
+        // 尝试解析用户原生头像与名字
+        try {
+          const statusCmd = `curl.exe ${proxyFlag}-s -H "Cookie: sp_dc=${spDc}" -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)" "https://accounts.spotify.com/status"`;
+          const statusHtml = execSync(statusCmd, { encoding: 'utf8', timeout: 6000 });
+          const needle = "sp-bootstrap-data='";
+          const p1 = statusHtml.indexOf(needle);
+          if (p1 !== -1) {
+            const p2 = statusHtml.indexOf("'", p1 + needle.length);
+            if (p2 !== -1) {
+              const bData = JSON.parse(statusHtml.substring(p1 + needle.length, p2));
+              if (bData && bData.user) {
+                user.id = bData.user.displayName || user.id;
+                user.name = bData.user.displayName || user.name;
+                user.avatarUrl = bData.user.largeImageUrl || bData.user.smallImageUrl || user.avatarUrl;
               }
-            }, (meRes) => {
-              let meBody = '';
-              meRes.on('data', c => meBody += c);
-              meRes.on('end', () => {
-                try {
-                  const me = JSON.parse(meBody);
-                  let avatar = '';
-                  if (me.images && me.images.length > 0 && me.images[0].url) {
-                    avatar = me.images[0].url;
-                  }
-                  resolve({
-                    accessToken: data.accessToken,
-                    accessTokenExpirationTimestampMs: data.accessTokenExpirationTimestampMs,
-                    user: {
-                      id: me.id || 'spotify_user',
-                      name: me.display_name || me.id || 'Spotify 用户',
-                      avatarUrl: avatar,
-                      vip: (me.product === 'premium')
-                    }
-                  });
-                } catch (_) {
-                  resolve({
-                    accessToken: data.accessToken,
-                    accessTokenExpirationTimestampMs: data.accessTokenExpirationTimestampMs,
-                    user: { id: 'spotify_user', name: 'Spotify 用户', avatarUrl: '', vip: false }
-                  });
-                }
-              });
-            });
-            meReq.on('error', () => resolve(null));
-            return;
+            }
           }
         } catch (_) {}
-        resolve(null);
-      });
-    });
-    req.on('error', () => resolve(null));
+
+        return resolve({
+          accessToken: data.accessToken,
+          accessTokenExpirationTimestampMs: data.accessTokenExpirationTimestampMs,
+          user: user
+        });
+      }
+    } catch (_) {}
+
+    resolve(null);
   });
 }
 
@@ -648,8 +679,8 @@ async function main() {
   console.log(`  🎉 成功捕获 Spotify 登录凭据 (sp_dc)！`);
   console.log(`======================================================================`);
 
-  console.log(`[*] 正在请求 Spotify 官方端点校验凭据并解析账号资料...`);
-  const profile = await fetchSpotifyUserProfile(capturedSpDc);
+  console.log(`[*] 正在请求 Spotify 官方端点校验凭据并解析账号资料与令牌...`);
+  const profile = await fetchSpotifyUserProfile(capturedSpDc, options.proxy);
 
   if (profile && profile.user) {
     console.log(`\n  👤 用户昵称: ${profile.user.name}`);
