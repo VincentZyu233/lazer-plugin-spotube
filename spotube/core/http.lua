@@ -2,8 +2,22 @@ local constants = require("spotube.core.constants")
 
 local http = {}
 
-local function json_decode(str)
+--- 快速判断字符串是否为合法的 JSON 起始 (避免将 HTML 传给 host.json_decode 导致 Dart 抛出 FormatException)
+local function is_json_string(str)
   if not str or type(str) ~= "string" or string.len(str) == 0 then
+    return false
+  end
+  for i = 1, math.min(string.len(str), 64) do
+    local b = string.byte(str, i)
+    if b > 32 then
+      return b == 123 or b == 91 -- '{' (123) 或 '[' (91)
+    end
+  end
+  return false
+end
+
+local function json_decode(str)
+  if not str or not is_json_string(str) then
     return nil
   end
   if host and host.json_decode then
@@ -68,8 +82,14 @@ function http.request(method, url, headers, body)
     return nil, "HTTP error " .. tostring(status) .. ": " .. tostring(res.body)
   end
 
-  local parsed_json = json_decode(res.body)
-  return parsed_json or res.body
+  if is_json_string(res.body) then
+    local parsed = json_decode(res.body)
+    if parsed ~= nil then
+      return parsed
+    end
+  end
+
+  return res.body
 end
 
 function http.get(url, headers)

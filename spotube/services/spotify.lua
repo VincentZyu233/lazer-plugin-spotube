@@ -514,12 +514,14 @@ function spotify_service.get_playlist(playlist_id)
   end
 
   if embed_res and type(embed_res) == "string" then
-    local s_start, s_end = string.find(embed_res, '<script id="__NEXT_DATA__"[^>]*>')
-    if s_end then
-      local e_start = string.find(embed_res, "</script>", s_end + 1, true)
-      if e_start then
-        local json_text = string.sub(embed_res, s_end + 1, e_start - 1)
-        local data = http.json_decode(json_text)
+    local tag_start = string.find(embed_res, '<script id="__NEXT_DATA__"', 1, true)
+    if tag_start then
+      local tag_close = string.find(embed_res, ">", tag_start, true)
+      if tag_close then
+        local e_start = string.find(embed_res, "</script>", tag_close + 1, true)
+        if e_start then
+          local json_text = string.sub(embed_res, tag_close + 1, e_start - 1)
+          local data = http.json_decode(json_text)
         local entity = data and data.props and data.props.pageProps and data.props.pageProps.state and data.props.pageProps.state.data and data.props.pageProps.state.data.entity
         if entity then
           title = entity.title or entity.name or title

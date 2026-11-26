@@ -106,9 +106,14 @@ function plugin.call(operation, args)
     end
     local res = lyrics.get_lyrics(title, artist, album, duration)
     if not res or not res.lines or #res.lines == 0 then
-      return { lines = {} }
+      return {}
     end
-    return res
+    return {
+      {
+        synced = (res.synced == true or res.hasSynced == true),
+        lines = res.lines
+      }
+    }
   elseif operation == "player_event" then
     return nil
   end
