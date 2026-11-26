@@ -44,9 +44,16 @@ function plugin.call(operation, args)
   elseif operation == "logout" then
     return auth.logout()
   elseif operation == "search" then
-    local query = args.query or ""
-    local limit = args.limit or 20
-    local offset = args.offset or 0
+    local query = ""
+    local limit = 20
+    local offset = 0
+    if type(args) == "string" then
+      query = args
+    elseif type(args) == "table" then
+      query = args.query or args.keyword or args.text or args.q or args.s or ""
+      limit = tonumber(args.limit) or 20
+      offset = tonumber(args.offset) or 0
+    end
     return spotify.search(query, limit, offset)
   elseif operation == "playlists" then
     local feed = spotify.get_home_feed()

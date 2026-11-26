@@ -240,19 +240,31 @@ function spotify_service.search(query_text, limit, offset)
     local gql_res = http.post(gql_url, gql_payload, gql_headers)
     if gql_res and type(gql_res) == "table" and gql_res.data and gql_res.data.searchV2 then
       local searchV2 = gql_res.data.searchV2
+      local search_artists = {}
 
-      -- 解析单曲
+      -- 1. 解析单曲
       local track_section = searchV2.tracksV2 or searchV2.tracks
       if track_section and track_section.items then
         for _, wrap in ipairs(track_section.items) do
           local item = wrap.item and wrap.item.data
           if item and item.id then
             local artist_names = {}
+            local song_artists = {}
             if item.artists and item.artists.items then
               for _, art in ipairs(item.artists.items) do
                 local a_name = art.profile and art.profile.name
-                if a_name then table.insert(artist_names, a_name) end
+                if a_name then
+                  table.insert(artist_names, a_name)
+                  table.insert(song_artists, {
+                    id = art.uri or a_name,
+                    name = a_name
+                  })
+                end
               end
+            end
+
+            if #song_artists == 0 then
+              table.insert(song_artists, { id = "unknown", name = "未知歌手" })
             end
 
             local cover_url = nil
@@ -262,13 +274,20 @@ function spotify_service.search(query_text, limit, offset)
             end
 
             local duration_ms = item.duration and item.duration.totalMilliseconds or 0
+            local album_name = item.albumOfTrack and item.albumOfTrack.name or ""
+            local album_id = item.albumOfTrack and item.albumOfTrack.id or ""
+
             table.insert(songs, {
               id = item.id,
               name = item.name,
               title = item.name,
+              artists = song_artists,
               artist = table.concat(artist_names, ", "),
-              album = item.albumOfTrack and item.albumOfTrack.name or "",
+              album = album_name,
+              albumName = album_name,
+              albumId = album_id,
               cover = cover_url,
+              coverUrl = cover_url,
               duration = math.floor(duration_ms / 1000),
               durationMs = duration_ms,
               provider = "spotube"
@@ -277,7 +296,62 @@ function spotify_service.search(query_text, limit, offset)
         end
       end
 
-      -- 解析歌单
+      -- 2. 解析专辑
+      local album_section = searchV2.albumsV2 or searchV2.albums
+      if album_section and album_section.items then
+        for _, wrap in ipairs(album_section.items) do
+          local a_data = wrap.data
+          if a_data and a_data.uri then
+            local _, a_id = spotify_service.parse_link(a_data.uri)
+            a_id = a_id or a_data.id
+            if a_id then
+              local a_cover = nil
+              if a_data.coverArt and a_data.coverArt.sources and a_data.coverArt.sources[1] then
+                a_cover = a_data.coverArt.sources[1].url
+              end
+              local a_artists = {}
+              if a_data.artists and a_data.artists.items then
+                for _, art in ipairs(a_data.artists.items) do
+                  if art.profile and art.profile.name then
+                    table.insert(a_artists, { id = art.uri or art.profile.name, name = art.profile.name })
+                  end
+                end
+              end
+              table.insert(albums, {
+                id = a_id,
+                name = a_data.name or "专辑",
+                title = a_data.name or "专辑",
+                cover = a_cover,
+                coverUrl = a_cover,
+                artists = a_artists,
+                provider = "spotube"
+              })
+            end
+          end
+        end
+      end
+
+      -- 3. 解析歌手
+      if searchV2.artists and searchV2.artists.items then
+        for _, wrap in ipairs(searchV2.artists.items) do
+          local art_data = wrap.data
+          if art_data and art_data.profile and art_data.profile.name then
+            local art_cover = nil
+            if art_data.visuals and art_data.visuals.avatarImage and art_data.visuals.avatarImage.sources and art_data.visuals.avatarImage.sources[1] then
+              art_cover = art_data.visuals.avatarImage.sources[1].url
+            end
+            table.insert(search_artists, {
+              id = art_data.uri or art_data.profile.name,
+              name = art_data.profile.name,
+              avatar = art_cover,
+              avatarUrl = art_cover,
+              provider = "spotube"
+            })
+          end
+        end
+      end
+
+      -- 4. 解析歌单
       if searchV2.playlists and searchV2.playlists.items then
         for _, wrap in ipairs(searchV2.playlists.items) do
           local p_data = wrap.data
@@ -295,6 +369,7 @@ function spotify_service.search(query_text, limit, offset)
                 title = p_data.name or "歌单",
                 name = p_data.name or "歌单",
                 cover = p_cover,
+                coverUrl = p_cover,
                 provider = "spotube"
               })
             end
@@ -302,11 +377,12 @@ function spotify_service.search(query_text, limit, offset)
         end
       end
 
-      if #songs > 0 or #playlists > 0 then
+      if #songs > 0 or #playlists > 0 or #albums > 0 then
         return {
           songs = songs,
-          playlists = playlists,
-          albums = albums
+          albums = albums,
+          artists = search_artists,
+          playlists = playlists
         }
       end
     end
@@ -325,25 +401,33 @@ function spotify_service.search(query_text, limit, offset)
     if res.tracks and res.tracks.items then
       for _, item in ipairs(res.tracks.items) do
         local artists = {}
+        local song_artists = {}
         if item.artists then
           for _, a in ipairs(item.artists) do
             table.insert(artists, a.name)
+            table.insert(song_artists, { id = a.id or a.name, name = a.name })
           end
         end
         local cover_url = nil
         if item.album and item.album.images and #item.album.images > 0 then
           cover_url = item.album.images[1].url
         end
-        local dur_sec = math.floor((item.duration_ms or 0) / 1000)
+        local dur_ms = item.duration_ms or 0
+        local dur_sec = math.floor(dur_ms / 1000)
+        local album_name = (item.album and item.album.name) or ""
         table.insert(songs, {
           id = item.id,
           name = item.name,
           title = item.name,
+          artists = song_artists,
           artist = table.concat(artists, ", "),
-          album = (item.album and item.album.name) or "",
+          album = album_name,
+          albumName = album_name,
+          albumId = item.album and item.album.id or "",
           cover = cover_url,
+          coverUrl = cover_url,
           duration = dur_sec,
-          durationMs = item.duration_ms or (dur_sec * 1000),
+          durationMs = dur_ms,
           provider = "spotube"
         })
       end
@@ -352,8 +436,9 @@ function spotify_service.search(query_text, limit, offset)
 
   return {
     songs = songs,
-    playlists = playlists,
-    albums = albums
+    albums = albums,
+    artists = {},
+    playlists = playlists
   }
 end
 
