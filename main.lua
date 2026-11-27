@@ -75,19 +75,26 @@ function plugin.call(operation, args)
     local sp_dc = store.get("sp_dc")
     local limit = tonumber(type(args) == "table" and args.limit) or 50
     local offset = tonumber(type(args) == "table" and args.offset) or 0
+    local user_pls = {}
     if sp_dc and string.len(tostring(sp_dc)) > 5 then
-      local user_pls = spotify.get_user_playlists(limit, offset)
-      if user_pls and #user_pls > 0 then
-        return user_pls
-      elseif offset > 0 then
-        return {}
+      user_pls = spotify.get_user_playlists(limit, offset) or {}
+    end
+    -- 如果是首屏请求 (offset == 0)，将官方精选公共榜单 (Top 50 Global, USA, Japan) 追加在自建歌单之后
+    if offset == 0 then
+      local feed = spotify.get_home_feed()
+      local charts = feed.playlists or {}
+      local seen = {}
+      for _, p in ipairs(user_pls) do
+        if p.id then seen[p.id] = true end
+      end
+      for _, c in ipairs(charts) do
+        if c.id and not seen[c.id] then
+          table.insert(user_pls, c)
+          seen[c.id] = true
+        end
       end
     end
-    if offset > 0 then
-      return {}
-    end
-    local feed = spotify.get_home_feed()
-    return feed.playlists or {}
+    return user_pls
   elseif operation == "artist" then
     local a_id = type(args) == "table" and (args.id or args.artistId or args.artist_id or args.name) or tostring(args or "")
     if a_id == "" and type(args) == "table" then a_id = args.name or "" end
