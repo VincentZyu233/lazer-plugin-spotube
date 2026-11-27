@@ -1,6 +1,15 @@
 # 📦 Spotube 音乐插件更新日志 (CHANGELOG)
 
-本文件记录了 `community.spotube.music`（Spotube 音乐网关插件）的所有关键版本演进、核心特性增加、架构演进与底层缺陷修复。
+本文件记录了 `lazer.spotube`（Spotube 音乐网关插件）的所有关键版本演进、核心特性增加、架构演进与底层缺陷修复。
+
+---
+
+## 🚀 v0.1.5 (2026-11-27) - 插件 ID 标准化对齐与生态矩阵统一
+
+### 🏷️ 规范演进与包名重构
+- **插件唯一标识升级为 `lazer.spotube`**：
+  - 对标 `lazer.kugou`、`lazer.youtube` 与 `lazer.ws.bridge`，将插件 ID 从 `community.spotube.music` 正式升级为 `lazer.spotube`。
+  - 构建产物标准化命名为 `lazer.spotube.zip`，全面纳入 `lazer.*` 核心官方/认证级扩展矩阵。
 
 ---
 

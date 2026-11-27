@@ -1,7 +1,7 @@
 # 🎵 Lazer Spotube Music Plugin (Spotify 曲库插件)
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg?style=flat-square)](LICENSE)
-[![Version: 0.1.4](https://img.shields.io/badge/Version-0.1.4-brightgreen.svg?style=flat-square)](manifest.json)
+[![Version: 0.1.5](https://img.shields.io/badge/Version-0.1.5-brightgreen.svg?style=flat-square)](manifest.json)
 [![Lazer: 2.0.210+](https://img.shields.io/badge/Lazer-2.0.210+-orange.svg?style=flat-square)](https://github.com/chuxuehaocai/Lazer)
 
 专为 [**Lazer**](https://github.com/chuxuehaocai/Lazer) 现代跨平台音乐播放器打造的 **Spotube (Spotify) 官方/第三方 Lua Gateway 扩展插件**。
@@ -140,7 +140,7 @@ Spotify 采用严格的 HttpOnly Cookie (`sp_dc`) 进行 Web 播放鉴权。本�
 
 Spotube 插件现已提交收录于 Lazer 官方插件市场：
 1. 打开 **Lazer** 播放器，进入 **设置 -> 插件管理 -> 插件市场**。
-2. 在市场中找到或搜索 **“Spotube”** (`community.spotube.music`)。
+2. 在市场中找到或搜索 **“Spotube”** (`lazer.spotube`)。
 3. 点击 **安装** 即可完成自动下载与激活，支持后续版本无感自动热更新！
 4. 在播放器音源切换列表选择 **Spotube** 即可尽情聆听。
 
