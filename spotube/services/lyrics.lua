@@ -329,19 +329,17 @@ function lyrics_service.get_lyrics(title, artist, album, duration_s, log_step)
 
   if is_synced then
     raw_lrc = res.syncedLyrics
-    lines = parse_lrc(raw_lrc)
-    if #lines == 0 then
-      is_synced = false
+    local ok_p, parsed_lines = pcall(parse_lrc, raw_lrc)
+    if ok_p and type(parsed_lines) == "table" and #parsed_lines > 0 then
+      lines = parsed_lines
     end
-  end
-
-  -- 若未能获取到同步时间轴，对普通文本按步进时间戳进行标准 LRC 格式化
-  -- 关键保障：Lazer 宿主在 _parsePlainLrc 中严格校验 [mm:ss.xx]，无时间戳的行会被完全丢弃！
-  -- 格式化为 stepped LRC 确保 Lazer 能够完整解析每一行并正常呈现滚动/纯文本歌词视图
-  if not is_synced and res.plainLyrics and string.len(res.plainLyrics) > 0 then
-    log("formatting_plain_lyrics_to_stepped", { len = string.len(res.plainLyrics) })
+  elseif res.plainLyrics and string.len(tostring(res.plainLyrics)) > 0 then
+    -- 若只有纯文本歌词，对普通文本按步进时间戳进行标准 LRC 格式化
+    -- 关键保障：Lazer 宿主在 _parsePlainLrc 中严格校验 [mm:ss.xx]，无时间戳的行会被完全丢弃！
+    -- 格式化为 stepped LRC 确保 Lazer 能够完整解析每一行并正常呈现滚动/纯文本歌词视图
+    log("formatting_plain_lyrics_to_stepped", { len = string.len(tostring(res.plainLyrics)) })
     local plain_lines = {}
-    for line in string.gmatch(res.plainLyrics, "[^\r\n]+") do
+    for line in string.gmatch(tostring(res.plainLyrics), "[^\r\n]+") do
       local fb = 1
       local lb = string.len(line)
       while fb <= lb and string.byte(line, fb) <= 32 do fb = fb + 1 end
@@ -370,6 +368,7 @@ function lyrics_service.get_lyrics(title, artist, album, duration_s, log_step)
         cur_ms = cur_ms + step_ms
       end
       raw_lrc = table.concat(lrc_buf, "\n")
+      is_synced = true
     end
   end
 
