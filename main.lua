@@ -73,13 +73,18 @@ function plugin.call(operation, args)
   elseif operation == "playlists" then
     local store = require("spotube.core.store")
     local sp_dc = store.get("sp_dc")
+    local limit = tonumber(type(args) == "table" and args.limit) or 50
+    local offset = tonumber(type(args) == "table" and args.offset) or 0
     if sp_dc and string.len(tostring(sp_dc)) > 5 then
-      local limit = tonumber(type(args) == "table" and args.limit) or 50
-      local offset = tonumber(type(args) == "table" and args.offset) or 0
       local user_pls = spotify.get_user_playlists(limit, offset)
-      if user_pls and user_pls.list and #user_pls.list > 0 then
-        return user_pls.list
+      if user_pls and #user_pls > 0 then
+        return user_pls
+      elseif offset > 0 then
+        return {}
       end
+    end
+    if offset > 0 then
+      return {}
     end
     local feed = spotify.get_home_feed()
     return feed.playlists or {}
@@ -90,12 +95,13 @@ function plugin.call(operation, args)
   elseif operation == "artistSongs" then
     local a_id = type(args) == "table" and (args.id or args.artistId or args.artist_id or args.name) or tostring(args or "")
     if a_id == "" and type(args) == "table" then a_id = args.name or "" end
-    local songs = spotify.get_artist_top_tracks(a_id)
+    local offset = tonumber(type(args) == "table" and args.offset) or 0
+    local songs = spotify.get_artist_top_tracks(a_id, offset)
     return (type(songs) == "table" and (songs.list or songs)) or {}
   elseif operation == "artistAlbums" or operation == "browseAlbums" then
     local a_id = type(args) == "table" and (args.id or args.artistId or args.artist_id or args.name) or tostring(args or "")
     if a_id == "" and type(args) == "table" then a_id = args.name or "" end
-    local limit = tonumber(type(args) == "table" and args.limit) or 50
+    local limit = tonumber(type(args) == "table" and args.limit) or 30
     local offset = tonumber(type(args) == "table" and args.offset) or 0
     local res = spotify.get_artist_albums(a_id, limit, offset)
     return (type(res) == "table" and (res.list or res)) or {}

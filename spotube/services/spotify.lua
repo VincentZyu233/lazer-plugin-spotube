@@ -1567,9 +1567,12 @@ end
 function spotify_service.get_user_playlists(limit, offset)
   limit = tonumber(limit) or 50
   offset = tonumber(offset) or 0
+  if offset > 0 then
+    -- Pathfinder 默认一次性返回完整列表，首屏后直接返回空数组以防 Lazer 循环翻页
+    return {}
+  end
   if limit > 50 then limit = 50 end
   if limit < 1 then limit = 50 end
-  if offset < 0 then offset = 0 end
 
   local sp_dc = store.get("sp_dc")
   local playlists = {}
@@ -1630,11 +1633,7 @@ function spotify_service.get_user_playlists(limit, offset)
       end
 
       if #playlists > 0 then
-        return {
-          list = playlists,
-          total = tonumber(res.data.me.libraryV3.totalCount) or #playlists,
-          hasMore = (offset + limit) < (tonumber(res.data.me.libraryV3.totalCount) or #playlists)
-        }
+        return playlists
       end
     end
   end
@@ -1684,27 +1683,30 @@ function spotify_service.get_user_playlists(limit, offset)
       end
 
       if #playlists > 0 then
-        local total = tonumber(res.total) or #playlists
-        return {
-          list = playlists,
-          total = total,
-          hasMore = (offset + limit) < total
-        }
+        return playlists
       end
     end
   end
 
-  return { list = {}, total = 0, hasMore = false }
+  return {}
 end
 
---- 智能解析艺人 ID (若传入的是纯名字如 "Porter Robinson"，则轻量搜索换取真实的 Spotify 艺人 ID)
+local artist_resolve_cache = {}
+
+--- 智能解析艺人 ID (若传入的是纯名字如 "Porter Robinson"，则轻量搜索换取真实的 Spotify 艺人 ID，带本地缓存防死循环)
 function spotify_service.resolve_artist(artist_id_or_name)
   local raw = tostring(artist_id_or_name or "")
   local cid = spotify_service.clean_id(raw)
   if not cid or cid == "" then return nil, raw, nil end
 
+  if artist_resolve_cache[cid] then
+    local c = artist_resolve_cache[cid]
+    return c.id, c.name, c.avatar
+  end
+
   -- 判断是否为标准的 Spotify 22 位 Base62 ID
   if string.len(cid) == 22 and string.match(cid, "^[a-zA-Z0-9]+$") then
+    artist_resolve_cache[cid] = { id = cid, name = nil, avatar = nil }
     return cid, nil, nil
   end
 
@@ -1713,17 +1715,33 @@ function spotify_service.resolve_artist(artist_id_or_name)
   if search_res and search_res.artists and #search_res.artists > 0 then
     local best = search_res.artists[1]
     if best and best.id then
+      artist_resolve_cache[cid] = { id = best.id, name = best.name or raw, avatar = best.avatarUrl or best.coverUrl }
       return best.id, best.name or raw, best.avatarUrl or best.coverUrl
     end
   end
 
+  artist_resolve_cache[cid] = { id = cid, name = raw, avatar = nil }
   return cid, raw, nil
 end
 
 --- 获取艺人详情资料 (双轨: Pathfinder queryArtistOverview 优先，附带 ID 自适应与全保底)
 function spotify_service.get_artist(artist_id)
   local cid, detected_name, detected_avatar = spotify_service.resolve_artist(artist_id)
-  if not cid or cid == "" then return nil end
+  local fallback_name = detected_name or tostring(artist_id or "Spotify 艺人")
+
+  if not cid or cid == "" then
+    return {
+      id = tostring(artist_id or "unknown"),
+      name = fallback_name,
+      coverUrl = detected_avatar,
+      avatarUrl = detected_avatar,
+      avatar = detected_avatar,
+      description = "Spotify 认证艺人",
+      albumCount = 0,
+      songCount = 0,
+      provider = "spotube"
+    }
+  end
 
   local token = spotify_service.ensure_token()
   local artist_obj = nil
@@ -1740,7 +1758,7 @@ function spotify_service.get_artist(artist_id)
     if res and type(res) == "table" and res.data and res.data.artistUnion then
       local au = res.data.artistUnion
       local prof = au.profile or {}
-      local name = prof.name or detected_name or tostring(artist_id)
+      local name = prof.name or detected_name or fallback_name
       local avatar = detected_avatar
       if prof.avatar and prof.avatar.sources and #prof.avatar.sources > 0 then
         avatar = prof.avatar.sources[1].url
@@ -1815,6 +1833,8 @@ function spotify_service.get_artist(artist_id)
         description = table.concat(desc_parts, " | "),
         genres = genres,
         followers = followers_cnt,
+        albumCount = 0,
+        songCount = 10,
         provider = "spotube"
       }
     end
@@ -1824,11 +1844,13 @@ function spotify_service.get_artist(artist_id)
   if not artist_obj then
     artist_obj = {
       id = cid,
-      name = detected_name or tostring(artist_id),
+      name = fallback_name,
       coverUrl = detected_avatar,
       avatarUrl = detected_avatar,
       avatar = detected_avatar,
       description = "Spotify 认证艺人",
+      albumCount = 0,
+      songCount = 10,
       provider = "spotube"
     }
   end
@@ -1836,8 +1858,14 @@ function spotify_service.get_artist(artist_id)
   return artist_obj
 end
 
---- 获取艺人热门单曲 (优先 Pathfinder queryArtistOverview.topTracks，对齐 Lazer 纯 List 要求)
-function spotify_service.get_artist_top_tracks(artist_id)
+--- 获取艺人热门单曲 (优先 Pathfinder queryArtistOverview.topTracks，对齐 Lazer 纯 List 要求，支持 offset 限频)
+function spotify_service.get_artist_top_tracks(artist_id, offset)
+  offset = tonumber(offset) or 0
+  if offset > 0 then
+    -- 代表作榜单固定单页返回，offset>0 立即终止
+    return {}
+  end
+
   local cid, detected_name, detected_avatar = spotify_service.resolve_artist(artist_id)
   if not cid or cid == "" then return {} end
 
@@ -1964,16 +1992,19 @@ function spotify_service.get_artist_top_tracks(artist_id)
   return songs
 end
 
---- 获取艺人专辑/单曲作品集 (/v1/artists/{id}/albums)
+--- 获取艺人专辑/单曲作品集 (/v1/artists/{id}/albums，严格限制分页防卡死)
 function spotify_service.get_artist_albums(artist_id, limit, offset)
+  offset = tonumber(offset) or 0
+  limit = tonumber(limit) or 30
+  if offset >= 30 then
+    -- 单次拉取 30 首主要专辑，超出第一页直接返回空数组截断 Lazer 的 while (more)
+    return {}
+  end
+  if limit > 30 then limit = 30 end
+  if limit < 1 then limit = 30 end
+
   local cid, detected_name, detected_avatar = spotify_service.resolve_artist(artist_id)
   if not cid or cid == "" then return {} end
-
-  limit = tonumber(limit) or 50
-  offset = tonumber(offset) or 0
-  if limit > 50 then limit = 50 end
-  if limit < 1 then limit = 50 end
-  if offset < 0 then offset = 0 end
 
   local albums = {}
   local token = spotify_service.ensure_token()
