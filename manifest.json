@@ -1,5 +1,5 @@
 {
-  "id": "lazer.spotube",
+  "id": "community.spotube.music",
   "name": "Spotube",
   "version": "0.2.0",
   "description": "专为 Lazer 打造的 Spotube (Spotify) 混合架构扩展插件：支持快捷授权登录、云端歌单与收藏同步、艺人主页生态、智能双层音频流缓存秒开、全域检索及 LRCLIB 逐行动感歌词。",
