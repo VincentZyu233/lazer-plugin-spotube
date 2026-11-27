@@ -1,19 +1,21 @@
 # 📦 Spotube 音乐插件更新日志 (CHANGELOG)
 
-本文件记录了 `lazer.spotube`（Spotube 音乐网关插件）的所有关键版本演进、核心特性增加、架构演进与底层缺陷修复。
+本文件记录了 `community.spotube.music`（Spotube 音乐网关插件）的所有关键版本演进、核心特性增加、架构演进与底层缺陷修复。
 
 ---
 
-## 🚀 v0.2.0 (2026-11-27) - P0 核心能力落地：云端歌单、艺人主页全生态与双层秒开缓存
+## 🚀 v0.2.0 (2026-11-28) - P0 核心能力落地：云端歌单、艺人主页全生态、公共榜单合并与双层秒开缓存
 
 ### ✨ 核心功能与生态链路打通 (P0 Capabilities)
 - **用户云端个人歌单同步 (`userPlaylists` / `playlists`)**：
-  - 接入 Spotify 官方 `/v1/me/playlists` 端点，支持无感拉取用户账号下所有创建与收藏的歌单列表，包含歌单封面、标题、曲目总数及作者描述。
-  - 在 Lazer 原生 `playlists` 契约中引入登录态自适应分发：检测到用户已登录时优先呈现个人云端歌单，未登录时无缝回退至全球热门精选。
+  - 接入 Spotify 内部 Pathfinder `libraryV3` 协议，深度支持用户账号下自建与收藏的完整歌单列表，完美保留四宫格自建封面、自建歌单可编辑属性（`canEditItems`）及曲目总数。
+  - 在 Lazer 原生 `playlists` 契约中合并官方精选公共榜单（Top 50 - Global / USA / Japan）与自建歌单，自建与订阅分区双轨并存。
 - **艺人主页全生态体系 (`artist` / `artistSongs` / `artistAlbums`)**：
-  - **艺人基本资料 (`artist`)**：对接 `/v1/artists/{id}`，提取高清艺人头像肖像、流派风格标签（Genres）以及全球粉丝数统计。
-  - **艺人热门单曲 (`artistSongs`)**：对接 `/v1/artists/{id}/top-tracks`，呈现代表作 Top 10，自动缓存音轨时长与高清唱片封面。
-  - **艺人全量专辑作品集 (`artistAlbums` / `browseAlbums`)**：对接 `/v1/artists/{id}/albums`，按唱片类型（Album / Single）分页呈现全作品集。
+  - **艺人基本资料 (`artist`)**：对接 Pathfinder `queryArtistOverview`，提取高清艺人肖像壁纸、官方简介文案以及全球月听众数统计（如 `47.0K`、`466.2K`）。
+  - **艺人热门单曲 (`artistSongs`)**：呈现官方代表作 Top 10，自动适配 `albumOfTrack.coverArt.sources` 提取 640x640 高清唱片封面与精准音轨时长。
+  - **艺人全量专辑作品集 (`artistAlbums` / `browseAlbums`)**：按唱片类型（Album / Single / EP）无缝聚合，0 次额外网络请求极速秒开。
+- **规范插件 ID 固化 (`community.spotube.music`)**：
+  - 严格保持标准规范 ID `community.spotube.music`，无缝继承老用户本地凭据与更新链。
 
 ### ⚡ 播放性能与防风控重构
 - **双层音频流缓存与 VideoID 永久记忆机制 (`spotube/core/cache.lua`)**：
