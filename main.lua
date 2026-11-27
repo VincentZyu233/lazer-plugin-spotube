@@ -211,7 +211,7 @@ function plugin.call(operation, args)
     }
     local function log_step(step_name, detail)
       table.insert(dbg.steps, { step = step_name, detail = detail })
-      store.set("debug_lyrics_latest", dbg)
+      -- 仅保留内存追踪与宿主日志，绝不同步调用 store.set 触发磁盘同步刷盘，避免大图模式/歌词展示时掉帧卡死
       if host and host.log then
         pcall(host.log, "info", "[spotube lyrics] " .. tostring(step_name), detail or {})
       end

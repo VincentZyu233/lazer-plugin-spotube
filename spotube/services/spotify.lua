@@ -1711,15 +1711,30 @@ function spotify_service.resolve_artist(artist_id_or_name)
     return cid, nil, nil
   end
 
-  -- 否则传入的是歌手名或复合 URI，先尝试轻量搜索
-  local search_res = spotify_service.search(raw, 5, 0)
-  if search_res and search_res.artists and #search_res.artists > 0 then
-    for _, art in ipairs(search_res.artists) do
-      if art and art.id then
-        local real_cid = spotify_service.clean_id(art.id)
-        if string.len(real_cid) == 22 then
-          artist_resolve_cache[cid] = { id = real_cid, name = art.name or raw, avatar = art.avatarUrl or art.coverUrl }
-          return real_cid, art.name or raw, art.avatarUrl or art.coverUrl
+  -- 否则传入的是歌手名或复合 URI，支持多歌手分隔符智能拆分（如 "Courtney Cooper / Jacoo"）
+  local candidate_names = { raw }
+  for _, sep in ipairs({ "/", "、", ",", ";", "&", " feat.", " ft." }) do
+    local p = string.find(raw, sep, 1, true)
+    if p then
+      local sub1 = string.sub(raw, 1, p - 1)
+      local sub2 = string.sub(raw, p + string.len(sep))
+      sub1 = string.gsub(sub1, "^%s*(.-)%s*$", "%1")
+      sub2 = string.gsub(sub2, "^%s*(.-)%s*$", "%1")
+      if sub1 ~= "" and sub1 ~= raw then table.insert(candidate_names, sub1) end
+      if sub2 ~= "" and sub2 ~= raw then table.insert(candidate_names, sub2) end
+    end
+  end
+
+  for _, name_to_try in ipairs(candidate_names) do
+    local search_res = spotify_service.search(name_to_try, 5, 0)
+    if search_res and search_res.artists and #search_res.artists > 0 then
+      for _, art in ipairs(search_res.artists) do
+        if art and art.id then
+          local real_cid = spotify_service.clean_id(art.id)
+          if string.len(real_cid) == 22 then
+            artist_resolve_cache[cid] = { id = real_cid, name = art.name or name_to_try, avatar = art.avatarUrl or art.coverUrl }
+            return real_cid, art.name or name_to_try, art.avatarUrl or art.coverUrl
+          end
         end
       end
     end

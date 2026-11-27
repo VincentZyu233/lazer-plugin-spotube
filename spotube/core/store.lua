@@ -26,17 +26,6 @@ function store.save_track_meta(track_id, meta)
   local cid = store.clean_id(track_id)
   store._track_meta[tostring(track_id)] = meta
   store._track_meta[cid] = meta
-  -- 同步持久化至宿主 Storage，防止跨任务或 isolate 重启后元数据丢失
-  pcall(function()
-    store.set("meta:" .. cid, {
-      id = cid,
-      title = meta.title or meta.name,
-      artist = meta.artist or (meta.artists and meta.artists[1] and meta.artists[1].name),
-      durationMs = meta.durationMs,
-      albumName = meta.albumName or meta.album,
-      coverUrl = meta.coverUrl or meta.cover
-    })
-  end)
 end
 
 function store.get_track_meta(track_id)
