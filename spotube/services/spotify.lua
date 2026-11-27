@@ -521,7 +521,7 @@ end
 
 local PLAYLIST_GQL_HASH = "21ea11a6ac75a5f3e01fd365d29c18e0a4a8b7dc09f89bbb5d73910190c6acaf"
 
---- 获取歌单详情与曲目 (优先采用官方 Pathfinder GQL，降级兼容 Web API)
+--- 获取歌单详情与曲目 (优先采用官方 Pathfinder GQL 获取单曲独立专辑封面，降级兼容公开 Embed 与 Web API)
 function spotify_service.get_playlist(playlist_id)
   local raw_id = playlist_id
   if type(playlist_id) == "table" then
@@ -536,94 +536,10 @@ function spotify_service.get_playlist(playlist_id)
   local title = "Spotify 歌单"
   local cover = nil
 
-  -- 1. 优先通过 open.spotify.com/embed 抓取完整歌单 (免鉴权，无 429 速率限制，不受 GQL hash 失效影响)
-  local embed_url = "https://open.spotify.com/embed/playlist/" .. tostring(clean_id)
-  local embed_res = http.get(embed_url, {
-    ["User-Agent"] = constants.USER_AGENT_DESKTOP
-  })
-  if (not embed_res or type(embed_res) ~= "string" or not string.find(embed_res, "__NEXT_DATA__", 1, true)) then
-    embed_url = "https://open.spotify.com/embed/album/" .. tostring(clean_id)
-    embed_res = http.get(embed_url, {
-      ["User-Agent"] = constants.USER_AGENT_DESKTOP
-    })
-  end
-
-  if embed_res and type(embed_res) == "string" then
-    local tag_start = string.find(embed_res, '<script id="__NEXT_DATA__"', 1, true)
-    if tag_start then
-      local tag_close = string.find(embed_res, ">", tag_start, true)
-      if tag_close then
-        local e_start = string.find(embed_res, "</script>", tag_close + 1, true)
-        if e_start then
-          local json_text = string.sub(embed_res, tag_close + 1, e_start - 1)
-          local data = http.json_decode(json_text)
-        local entity = data and data.props and data.props.pageProps and data.props.pageProps.state and data.props.pageProps.state.data and data.props.pageProps.state.data.entity
-        if entity then
-          title = entity.title or entity.name or title
-          if entity.coverArt and entity.coverArt.sources and entity.coverArt.sources[1] then
-            cover = entity.coverArt.sources[1].url
-          end
-          if entity.trackList and type(entity.trackList) == "table" then
-            for _, tr in ipairs(entity.trackList) do
-              local tr_id = spotify_service.clean_id(tr.uri)
-              local tr_title = tr.title or ""
-              local tr_artist = tr.subtitle or ""
-              local tr_dur = tonumber(tr.duration) or 0
-              local song_artists = {}
-              if tr_artist ~= "" then
-                table.insert(song_artists, { id = tr_artist, name = tr_artist })
-              else
-                table.insert(song_artists, { id = "unknown", name = "未知歌手" })
-              end
-              -- 方案 A：单曲封面优先采用历史缓存的真实独立封面；若未缓存则置 nil，使用 Lazer 原生占位符，绝不污染使用歌单大封面
-              local prev_meta = store.get_track_meta(tr_id)
-              local track_cover = nil
-              if prev_meta and prev_meta.coverUrl and prev_meta.coverUrl ~= "" and prev_meta.coverUrl ~= cover then
-                track_cover = prev_meta.coverUrl
-              end
-
-              local song_obj = {
-                id = tr_id,
-                name = tr_title,
-                title = tr_title,
-                artists = song_artists,
-                artist = tr_artist,
-                album = title,
-                albumName = title,
-                albumId = clean_id,
-                cover = track_cover,
-                coverUrl = track_cover,
-                duration = math.floor(tr_dur / 1000),
-                durationMs = tr_dur,
-                provider = "spotube"
-              }
-              store.save_track_meta(tr_id, song_obj)
-              table.insert(songs, song_obj)
-            end
-          end
-          if #songs > 0 then
-            return {
-              id = clean_id,
-              name = title,
-              title = title,
-              cover = cover,
-              coverUrl = cover,
-              songCount = #songs,
-              songs = songs
-            }
-          end
-        end
-      end
-    end
-  end
-end
-
+  -- 1. 优先使用官方 Pathfinder GQL fetchPlaylist (单次网络请求直接打包包含全部 50 首单曲各自独立的 640x640 专辑封面)
   local token = spotify_service.ensure_token()
-
-  -- 2. 使用 Pathfinder GQL fetchPlaylist
   if token then
     local uri_formatted = "spotify:playlist:" .. tostring(clean_id)
-
     local gql_url = constants.HOST_SPOTIFY_PARTNER .. "/pathfinder/v2/query"
     local gql_payload = {
       operationName = "fetchPlaylist",
@@ -653,6 +569,16 @@ end
     end
 
     local gql_res = http.post(gql_url, gql_payload, gql_headers)
+    if not gql_res or type(gql_res) ~= "table" or not gql_res.data or not gql_res.data.playlistV2 then
+      -- 若 Token 过期或异常，强制刷新一次并重试
+      local fresh_token = spotify_service.ensure_token(true)
+      if fresh_token and fresh_token ~= token then
+        token = fresh_token
+        gql_headers["Authorization"] = "Bearer " .. tostring(token)
+        gql_res = http.post(gql_url, gql_payload, gql_headers)
+      end
+    end
+
     if gql_res and type(gql_res) == "table" and gql_res.data and gql_res.data.playlistV2 then
       local pl = gql_res.data.playlistV2
       title = pl.name or title
@@ -730,6 +656,87 @@ end
           songCount = #songs,
           songs = songs
         }
+      end
+    end
+  end
+
+  -- 2. 降级方案 A：通过 open.spotify.com/embed 抓取完整歌单 (免鉴权，无 429 速率限制，不受 GQL hash 失效影响)
+  local embed_url = "https://open.spotify.com/embed/playlist/" .. tostring(clean_id)
+  local embed_res = http.get(embed_url, {
+    ["User-Agent"] = constants.USER_AGENT_DESKTOP
+  })
+  if (not embed_res or type(embed_res) ~= "string" or not string.find(embed_res, "__NEXT_DATA__", 1, true)) then
+    embed_url = "https://open.spotify.com/embed/album/" .. tostring(clean_id)
+    embed_res = http.get(embed_url, {
+      ["User-Agent"] = constants.USER_AGENT_DESKTOP
+    })
+  end
+
+  if embed_res and type(embed_res) == "string" then
+    local tag_start = string.find(embed_res, '<script id="__NEXT_DATA__"', 1, true)
+    if tag_start then
+      local tag_close = string.find(embed_res, ">", tag_start, true)
+      if tag_close then
+        local e_start = string.find(embed_res, "</script>", tag_close + 1, true)
+        if e_start then
+          local json_text = string.sub(embed_res, tag_close + 1, e_start - 1)
+          local data = http.json_decode(json_text)
+          local entity = data and data.props and data.props.pageProps and data.props.pageProps.state and data.props.pageProps.state.data and data.props.pageProps.state.data.entity
+          if entity then
+            title = entity.title or entity.name or title
+            if entity.coverArt and entity.coverArt.sources and entity.coverArt.sources[1] then
+              cover = entity.coverArt.sources[1].url
+            end
+            if entity.trackList and type(entity.trackList) == "table" then
+              for _, tr in ipairs(entity.trackList) do
+                local tr_id = spotify_service.clean_id(tr.uri)
+                local tr_title = tr.title or ""
+                local tr_artist = tr.subtitle or ""
+                local tr_dur = tonumber(tr.duration) or 0
+                local song_artists = {}
+                if tr_artist ~= "" then
+                  table.insert(song_artists, { id = tr_artist, name = tr_artist })
+                else
+                  table.insert(song_artists, { id = "unknown", name = "未知歌手" })
+                end
+                local prev_meta = store.get_track_meta(tr_id)
+                local track_cover = nil
+                if prev_meta and prev_meta.coverUrl and prev_meta.coverUrl ~= "" and prev_meta.coverUrl ~= cover then
+                  track_cover = prev_meta.coverUrl
+                end
+
+                local song_obj = {
+                  id = tr_id,
+                  name = tr_title,
+                  title = tr_title,
+                  artists = song_artists,
+                  artist = tr_artist,
+                  album = title,
+                  albumName = title,
+                  albumId = clean_id,
+                  cover = track_cover,
+                  coverUrl = track_cover,
+                  duration = math.floor(tr_dur / 1000),
+                  durationMs = tr_dur,
+                  provider = "spotube"
+                }
+                store.save_track_meta(tr_id, song_obj)
+                table.insert(songs, song_obj)
+              end
+            end
+            if #songs > 0 then
+              return {
+                id = clean_id,
+                name = title,
+                title = title,
+                cover = cover,
+                coverUrl = cover,
+                songCount = #songs,
+                songs = songs
+              }
+            end
+          end
+        end
       end
     end
   end

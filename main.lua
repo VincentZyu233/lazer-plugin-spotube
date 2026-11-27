@@ -103,15 +103,27 @@ function plugin.call(operation, args)
     local album = args.album
     local duration = args.duration or (args.durationMs and (args.durationMs / 1000))
     local song_id = args.id or args.songId
+
+    -- Lazer 宿主在播放页通常只传递 song_id，需自愈补全歌曲标题与歌手
     if (not title or title == "") and song_id then
-      local meta = require("spotube.core.store").get_track_meta(song_id)
-      if meta then
+      local clean_id = spotify.clean_id(song_id)
+      local meta = require("spotube.core.store").get_track_meta(clean_id)
+      if meta and (meta.title or meta.name) then
         title = meta.title or meta.name
         artist = artist or meta.artist
         album = album or meta.albumName
         duration = duration or (meta.durationMs and (meta.durationMs / 1000))
+      else
+        local detail = spotify.get_track_detail(clean_id)
+        if detail and (detail.title or detail.name) then
+          title = detail.title or detail.name
+          artist = artist or detail.artist
+          album = album or detail.albumName
+          duration = duration or (detail.durationMs and (detail.durationMs / 1000))
+        end
       end
     end
+
     local res = lyrics.get_lyrics(title, artist, album, duration)
     if not res or not res.lines or #res.lines == 0 then
       return {}

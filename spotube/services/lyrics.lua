@@ -15,32 +15,93 @@ local function url_encode(str)
   return s
 end
 
---- 从 LRCLib 抓取高精度同步歌词
+-- 解析标准 LRC 文本为带有高精度时间轴的行 (对齐 Lazer MusicLyricLine 要求: text 与 startMs)
+local function parse_lrc(raw_lrc)
+  if not raw_lrc or raw_lrc == "" then return {} end
+  local lines = {}
+
+  for line in string.gmatch(raw_lrc, "[^\r\n]+") do
+    if string.sub(line, 1, 1) == "[" then
+      local rightBracket = string.find(line, "]", 2, true)
+      if rightBracket then
+        local timePart = string.sub(line, 2, rightBracket - 1)
+        local colonPos = string.find(timePart, ":", 1, true)
+        if colonPos then
+          local minStr = string.sub(timePart, 1, colonPos - 1)
+          local min = tonumber(minStr)
+          if min then
+            local rest = string.sub(timePart, colonPos + 1)
+            local dotPos = string.find(rest, ".", 1, true) or string.find(rest, ":", 1, true)
+            local sec, ms = 0, 0
+            if dotPos then
+              sec = tonumber(string.sub(rest, 1, dotPos - 1)) or 0
+              local msStr = string.sub(rest, dotPos + 1)
+              local msVal = tonumber(msStr) or 0
+              local msLen = string.len(msStr)
+              if msLen == 2 then
+                msVal = msVal * 10
+              elseif msLen == 1 then
+                msVal = msVal * 100
+              end
+              ms = msVal
+            else
+              sec = tonumber(rest) or 0
+            end
+            local startMs = min * 60000 + sec * 1000 + ms
+            local text = string.sub(line, rightBracket + 1)
+            local firstNonSpace = 1
+            local lastNonSpace = string.len(text)
+            while firstNonSpace <= lastNonSpace and string.byte(text, firstNonSpace) <= 32 do
+              firstNonSpace = firstNonSpace + 1
+            end
+            while lastNonSpace >= firstNonSpace and string.byte(text, lastNonSpace) <= 32 do
+              lastNonSpace = lastNonSpace - 1
+            end
+            local cleanText = (lastNonSpace >= firstNonSpace) and string.sub(text, firstNonSpace, lastNonSpace) or ""
+            table.insert(lines, {
+              text = cleanText,
+              startMs = startMs,
+              time = startMs
+            })
+          end
+        end
+      end
+    end
+  end
+
+  return lines
+end
+
+--- 从 LRCLib 抓取高精度同步歌词 (100% 对齐 Spotube 官方内置 RealLRCLibLyricsAPI 实现)
 function lyrics_service.get_lyrics(title, artist, album, duration_s)
   if not title or string.len(title) == 0 then
     return nil
   end
 
+  local headers = {
+    ["User-Agent"] = "Spotube/v6.0.0 LRCLib Lyric Plugin"
+  }
+
+  -- 1. 第一阶：精确匹配 /api/get (对标 Spotube: track_name, artist_name, album_name, duration)
   local query_params = "track_name=" .. url_encode(title)
   if artist and string.len(artist) > 0 then
     query_params = query_params .. "&artist_name=" .. url_encode(artist)
   end
-  if duration_s and tonumber(duration_s) then
+  if album and string.len(album) > 0 then
+    query_params = query_params .. "&album_name=" .. url_encode(album)
+  end
+  if duration_s and tonumber(duration_s) and tonumber(duration_s) > 0 then
     query_params = query_params .. "&duration=" .. tostring(math.floor(tonumber(duration_s)))
   end
 
   local url = constants.HOST_LRCLIB .. "/api/get?" .. query_params
-  local res = http.get(url, {
-    ["User-Agent"] = "Lazer-Spotube-Plugin/0.1.0 (https://github.com/VincentZyu233/lazer-plugin-spotube)"
-  })
+  local res = http.get(url, headers)
 
-  -- 若精确匹配未命中，通过 /api/search 进行模糊兜底检索
+  -- 2. 第二阶：若精确匹配未命中或 404，通过 /api/search 进行模糊兜底匹配 (Spotube 官方机制)
   if not res or type(res) ~= "table" or (not res.syncedLyrics and not res.plainLyrics) then
     local search_q = url_encode(title .. (artist and (" " .. artist) or ""))
     local search_url = constants.HOST_LRCLIB .. "/api/search?q=" .. search_q
-    local s_res = http.get(search_url, {
-      ["User-Agent"] = "Lazer-Spotube-Plugin/0.1.0 (https://github.com/VincentZyu233/lazer-plugin-spotube)"
-    })
+    local s_res = http.get(search_url, headers)
     if s_res and type(s_res) == "table" and #s_res > 0 then
       for _, it in ipairs(s_res) do
         if it.syncedLyrics and string.len(it.syncedLyrics) > 0 then
@@ -63,44 +124,11 @@ function lyrics_service.get_lyrics(title, artist, album, duration_s)
     return nil
   end
 
-  -- 解析逐行歌词为 Lazer 标准 lines 数组 (包含 startMs 供 Lazer 实时渲染)
-  local lines = {}
-  for line in string.gmatch(raw_lrc, "[^\r\n]+") do
-    local parsed = false
-    if string.sub(line, 1, 1) == "[" then
-      local close_idx = string.find(line, "]", 2, true)
-      if close_idx then
-        local tag = string.sub(line, 2, close_idx - 1)
-        local text = string.sub(line, close_idx + 1)
-        local colon = string.find(tag, ":", 1, true)
-        if colon then
-          local m_str = string.sub(tag, 1, colon - 1)
-          local rest = string.sub(tag, colon + 1)
-          local s_str = rest
-          local ms_str = "0"
-          local dot = string.find(rest, ".", 1, true)
-          if dot then
-            s_str = string.sub(rest, 1, dot - 1)
-            ms_str = string.sub(rest, dot + 1)
-          end
-          local m = tonumber(m_str)
-          local s = tonumber(s_str)
-          local ms = tonumber(ms_str)
-          if m and s then
-            local time_ms = (m * 60 + s) * 1000 + (ms or 0) * 10
-            table.insert(lines, {
-              startMs = time_ms,
-              time = time_ms,
-              text = text or ""
-            })
-            parsed = true
-          end
-        end
-      end
-    end
+  local lines = parse_lrc(raw_lrc)
 
-    if not parsed then
-      -- 纯文本行
+  -- 若未能解析出同步时间轴但有普通文本，按行包装为静态文本行
+  if #lines == 0 and res.plainLyrics then
+    for line in string.gmatch(res.plainLyrics, "[^\r\n]+") do
       local first_b = 1
       local last_b = string.len(line)
       while first_b <= last_b and string.byte(line, first_b) <= 32 do first_b = first_b + 1 end
@@ -118,8 +146,8 @@ function lyrics_service.get_lyrics(title, artist, album, duration_s)
   return {
     lines = lines,
     source = "lrclib",
-    synced = res.syncedLyrics ~= nil,
-    hasSynced = res.syncedLyrics ~= nil
+    synced = (res.syncedLyrics ~= nil and #lines > 0),
+    hasSynced = (res.syncedLyrics ~= nil and #lines > 0)
   }
 end
 
