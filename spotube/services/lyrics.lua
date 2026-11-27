@@ -102,9 +102,17 @@ end
 
 --- 从 LRCLib 抓取高精度同步歌词 (100% 对齐 Spotube 官方内置 RealLRCLibLyricsAPI 实现)
 function lyrics_service.get_lyrics(title, artist, album, duration_s, log_step)
+  if log_step then
+    pcall(log_step, "lrclib_0_entry", {
+      title = tostring(title),
+      artist = tostring(artist),
+      duration = tostring(duration_s)
+    })
+  end
+
   local function log(msg, data)
     if log_step then
-      log_step("lrclib_" .. msg, data)
+      pcall(log_step, "lrclib_" .. msg, data)
     end
   end
 
@@ -141,13 +149,14 @@ function lyrics_service.get_lyrics(title, artist, album, duration_s, log_step)
 
   local u1 = constants.HOST_LRCLIB .. "/api/get?" .. q1
   log("stage1_request", { url = u1 })
-  local r1, err1 = http.get(u1, headers)
+  local ok1, r1, err1 = pcall(http.get, u1, headers)
   log("stage1_response", {
-    is_table = type(r1) == "table",
-    has_synced = (type(r1) == "table" and r1.syncedLyrics ~= nil and string.len(tostring(r1.syncedLyrics)) > 0),
-    err = err1
+    call_ok = ok1,
+    is_table = (ok1 and type(r1) == "table"),
+    has_synced = (ok1 and type(r1) == "table" and r1.syncedLyrics ~= nil and string.len(tostring(r1.syncedLyrics)) > 0),
+    err = (not ok1 and tostring(r1)) or err1
   })
-  if r1 and type(r1) == "table" then
+  if ok1 and r1 and type(r1) == "table" then
     res = r1
   end
 
@@ -159,15 +168,16 @@ function lyrics_service.get_lyrics(title, artist, album, duration_s, log_step)
     end
     local u2 = constants.HOST_LRCLIB .. "/api/get?" .. q2
     log("stage2_request", { url = u2 })
-    local r2, err2 = http.get(u2, headers)
+    local ok2, r2, err2 = pcall(http.get, u2, headers)
     log("stage2_response", {
-      is_table = type(r2) == "table",
-      has_synced = (type(r2) == "table" and r2.syncedLyrics ~= nil and string.len(tostring(r2.syncedLyrics)) > 0),
-      err = err2
+      call_ok = ok2,
+      is_table = (ok2 and type(r2) == "table"),
+      has_synced = (ok2 and type(r2) == "table" and r2.syncedLyrics ~= nil and string.len(tostring(r2.syncedLyrics)) > 0),
+      err = (not ok2 and tostring(r2)) or err2
     })
-    if r2 and type(r2) == "table" and r2.syncedLyrics and string.len(tostring(r2.syncedLyrics)) > 0 then
+    if ok2 and r2 and type(r2) == "table" and r2.syncedLyrics and string.len(tostring(r2.syncedLyrics)) > 0 then
       res = r2
-    elseif not res and r2 and type(r2) == "table" then
+    elseif not res and ok2 and r2 and type(r2) == "table" then
       res = r2
     end
   end
@@ -177,13 +187,14 @@ function lyrics_service.get_lyrics(title, artist, album, duration_s, log_step)
     local search_terms = query_title .. (primary_artist ~= "" and (" " .. primary_artist) or "")
     local s_url = constants.HOST_LRCLIB .. "/api/search?q=" .. url_encode(search_terms)
     log("stage3_request", { url = s_url })
-    local s_res, err3 = http.get(s_url, headers)
+    local ok3, s_res, err3 = pcall(http.get, s_url, headers)
     log("stage3_response", {
-      is_table = type(s_res) == "table",
-      count = (type(s_res) == "table" and #s_res) or 0,
-      err = err3
+      call_ok = ok3,
+      is_table = (ok3 and type(s_res) == "table"),
+      count = (ok3 and type(s_res) == "table" and #s_res) or 0,
+      err = (not ok3 and tostring(s_res)) or err3
     })
-    if s_res and type(s_res) == "table" and #s_res > 0 then
+    if ok3 and s_res and type(s_res) == "table" and #s_res > 0 then
       local found_synced = false
       for _, it in ipairs(s_res) do
         if it.syncedLyrics and string.len(tostring(it.syncedLyrics)) > 0 then
@@ -202,13 +213,14 @@ function lyrics_service.get_lyrics(title, artist, album, duration_s, log_step)
   if not res or not res.syncedLyrics or string.len(tostring(res.syncedLyrics)) == 0 then
     local s_url2 = constants.HOST_LRCLIB .. "/api/search?q=" .. url_encode(query_title)
     log("stage4_request", { url = s_url2 })
-    local s_res2, err4 = http.get(s_url2, headers)
+    local ok4, s_res2, err4 = pcall(http.get, s_url2, headers)
     log("stage4_response", {
-      is_table = type(s_res2) == "table",
-      count = (type(s_res2) == "table" and #s_res2) or 0,
-      err = err4
+      call_ok = ok4,
+      is_table = (ok4 and type(s_res2) == "table"),
+      count = (ok4 and type(s_res2) == "table" and #s_res2) or 0,
+      err = (not ok4 and tostring(s_res2)) or err4
     })
-    if s_res2 and type(s_res2) == "table" and #s_res2 > 0 then
+    if ok4 and s_res2 and type(s_res2) == "table" and #s_res2 > 0 then
       for _, it in ipairs(s_res2) do
         if it.syncedLyrics and string.len(tostring(it.syncedLyrics)) > 0 then
           res = it

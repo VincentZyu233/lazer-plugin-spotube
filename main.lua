@@ -152,9 +152,25 @@ function plugin.call(operation, args)
       return {}
     end
 
-    log_step("4_fetching_lrclib", { title = title, artist = artist, album = album, duration = duration })
+    log_step("4_fetching_lrclib", {
+      title = title,
+      artist = artist,
+      album = album,
+      duration = duration,
+      lyrics_type = type(lyrics),
+      get_lyrics_type = type(lyrics and lyrics.get_lyrics)
+    })
 
-    local res = lyrics.get_lyrics(title, artist, album, duration, log_step)
+    local ok, res_or_err = pcall(function()
+      return lyrics.get_lyrics(title, artist, album, duration, log_step)
+    end)
+
+    if not ok then
+      log_step("5_exception_caught", { err = tostring(res_or_err) })
+      return {}
+    end
+
+    local res = res_or_err
 
     if not res or not res.raw_lrc or string.len(res.raw_lrc) == 0 then
       log_step("5_lrclib_no_lyrics", { has_res = (res ~= nil) })
