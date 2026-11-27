@@ -90,4 +90,30 @@ assert_eq(cache.get_matched_vid("track_test_1"), "yt_vid_abc", "invalidate 不�
 
 print("  ✓ cache 双层缓存与 VideoID 记忆系统全部测试通过")
 
+print(">>> [Test 4] 验证 artist 智能自适应与强类型纯数组返回")
+local art = plugin.call("artist", { name = "Porter Robinson" })
+assert(art ~= nil, "artist 返回绝不能为 nil")
+assert_eq(type(art), "table", "artist 必须返回 table")
+assert(art.name ~= nil and art.name ~= "", "artist 必须包含 name")
+print("  ✓ artist 智能自适应校验通过: " .. tostring(art.name))
+
+local art_songs = plugin.call("artistSongs", { name = "Porter Robinson" })
+assert(type(art_songs) == "table", "artistSongs 必须返回 table")
+-- 验证是纯数组而非 Map
+local is_pure_array = true
+for k, _ in pairs(art_songs) do
+  if type(k) ~= "number" then is_pure_array = false break end
+end
+assert(is_pure_array, "artistSongs 必须是纯 List 数组")
+print("  ✓ artistSongs 纯 List 契约断言通过")
+
+local art_albums = plugin.call("artistAlbums", { name = "Porter Robinson" })
+assert(type(art_albums) == "table", "artistAlbums 必须返回 table")
+local is_alb_pure_array = true
+for k, _ in pairs(art_albums) do
+  if type(k) ~= "number" then is_alb_pure_array = false break end
+end
+assert(is_alb_pure_array, "artistAlbums 必须是纯 List 数组")
+print("  ✓ artistAlbums 纯 List 契约断言通过")
+
 print(">>> ALL v0.2.0 P0 FEATURE TESTS PASSED SUCCESSFULLY!")

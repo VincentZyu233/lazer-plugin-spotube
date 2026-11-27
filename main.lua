@@ -84,17 +84,21 @@ function plugin.call(operation, args)
     local feed = spotify.get_home_feed()
     return feed.playlists or {}
   elseif operation == "artist" then
-    local a_id = type(args) == "table" and (args.id or args.artistId or args.artist_id) or tostring(args or "")
+    local a_id = type(args) == "table" and (args.id or args.artistId or args.artist_id or args.name) or tostring(args or "")
+    if a_id == "" and type(args) == "table" then a_id = args.name or "" end
     return spotify.get_artist(a_id)
   elseif operation == "artistSongs" then
-    local a_id = type(args) == "table" and (args.id or args.artistId or args.artist_id) or tostring(args or "")
-    return spotify.get_artist_top_tracks(a_id)
+    local a_id = type(args) == "table" and (args.id or args.artistId or args.artist_id or args.name) or tostring(args or "")
+    if a_id == "" and type(args) == "table" then a_id = args.name or "" end
+    local songs = spotify.get_artist_top_tracks(a_id)
+    return (type(songs) == "table" and (songs.list or songs)) or {}
   elseif operation == "artistAlbums" or operation == "browseAlbums" then
-    local a_id = type(args) == "table" and (args.id or args.artistId or args.artist_id) or tostring(args or "")
+    local a_id = type(args) == "table" and (args.id or args.artistId or args.artist_id or args.name) or tostring(args or "")
+    if a_id == "" and type(args) == "table" then a_id = args.name or "" end
     local limit = tonumber(type(args) == "table" and args.limit) or 50
     local offset = tonumber(type(args) == "table" and args.offset) or 0
     local res = spotify.get_artist_albums(a_id, limit, offset)
-    return (res and res.list) or {}
+    return (type(res) == "table" and (res.list or res)) or {}
   elseif operation == "playlist" then
     local p_id = type(args) == "table" and (args.id or args.playlistId or args.playlist_id) or tostring(args or "")
     if p_id == "__lazer_favorites__" or string.find(p_id, "favorites", 1, true) then
