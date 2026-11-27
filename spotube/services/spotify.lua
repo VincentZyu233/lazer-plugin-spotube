@@ -422,6 +422,7 @@ function spotify_service.search(query_text, limit, offset)
               name = art_data.profile.name,
               avatar = art_cover,
               avatarUrl = art_cover,
+              coverUrl = art_cover,
               provider = "spotube"
             })
           end
@@ -467,12 +468,13 @@ function spotify_service.search(query_text, limit, offset)
 
   -- 3. 降级方案：REST API 搜索 (https://api.spotify.com/v1/search)
   local search_url = "https://api.spotify.com/v1/search?q=" .. tostring(query_text) ..
-                     "&type=track,playlist,album&limit=" .. tostring(lim) .. "&offset=" .. tostring(off)
+                     "&type=track,playlist,album,artist&limit=" .. tostring(lim) .. "&offset=" .. tostring(off)
   local headers = {
     ["User-Agent"] = constants.USER_AGENT_DESKTOP,
     ["Authorization"] = "Bearer " .. tostring(token or "")
   }
 
+  local search_artists = {}
   local res = http.get(search_url, headers)
   if res and type(res) == "table" then
     if res.tracks and res.tracks.items then
@@ -482,7 +484,7 @@ function spotify_service.search(query_text, limit, offset)
         if item.artists then
           for _, a in ipairs(item.artists) do
             table.insert(artists, a.name)
-            table.insert(song_artists, { id = a.id or a.name, name = a.name })
+            table.insert(song_artists, { id = a.id or a.name, name = a.name, coverUrl = "" })
           end
         end
         local cover_url = nil
@@ -509,12 +511,57 @@ function spotify_service.search(query_text, limit, offset)
         })
       end
     end
+
+    if res.artists and res.artists.items then
+      for _, art in ipairs(res.artists.items) do
+        local art_cover = nil
+        if art.images and #art.images > 0 then
+          art_cover = art.images[1].url
+        end
+        table.insert(search_artists, {
+          id = art.id or art.name,
+          name = art.name,
+          coverUrl = art_cover,
+          avatarUrl = art_cover,
+          avatar = art_cover,
+          provider = "spotube"
+        })
+      end
+    end
+
+    if res.albums and res.albums.items then
+      for _, alb in ipairs(res.albums.items) do
+        local alb_cover = nil
+        if alb.images and #alb.images > 0 then
+          alb_cover = alb.images[1].url
+        end
+        local alb_artists = {}
+        local art_names = {}
+        if alb.artists then
+          for _, a in ipairs(alb.artists) do
+            table.insert(art_names, a.name)
+            table.insert(alb_artists, { id = a.id or a.name, name = a.name, coverUrl = "" })
+          end
+        end
+        table.insert(albums, {
+          id = alb.id,
+          name = alb.name,
+          title = alb.name,
+          artist = table.concat(art_names, ", "),
+          artists = alb_artists,
+          cover = alb_cover,
+          coverUrl = alb_cover,
+          songCount = alb.total_tracks or 0,
+          provider = "spotube"
+        })
+      end
+    end
   end
 
   return {
     songs = songs,
     albums = albums,
-    artists = {},
+    artists = search_artists,
     playlists = playlists
   }
 end
@@ -890,7 +937,9 @@ function spotify_service.get_home_feed()
 
   return {
     playlists = playlists,
-    charts = charts
+    charts = charts,
+    editorialPlaylists = charts,
+    recommended = playlists
   }
 end
 
@@ -1013,6 +1062,299 @@ function spotify_service.get_track_detail(track_id)
   end
 
   return cached_meta
+end
+
+--- 获取专辑详情 (优先使用官方 Web API，降级兼容公开 Embed 与 Web 页面)
+function spotify_service.get_album(album_id)
+  local raw_id = album_id
+  if type(album_id) == "table" then
+    raw_id = album_id.id or album_id.albumId or album_id.album_id
+  end
+  local clean_id = spotify_service.clean_id(raw_id)
+  if not clean_id or clean_id == "" then return nil end
+
+  local token = spotify_service.ensure_token()
+  if token then
+    local url = "https://api.spotify.com/v1/albums/" .. tostring(clean_id)
+    local headers = {
+      ["User-Agent"] = constants.USER_AGENT_DESKTOP,
+      ["Authorization"] = "Bearer " .. tostring(token)
+    }
+    local sp_dc = store.get("sp_dc")
+    if sp_dc and string.len(sp_dc) > 0 then
+      headers["Cookie"] = "sp_dc=" .. tostring(sp_dc)
+    end
+
+    local res = http.get(url, headers)
+    if res and type(res) == "table" and res.name then
+      local artist_names = {}
+      local alb_artists = {}
+      if res.artists then
+        for _, a in ipairs(res.artists) do
+          table.insert(artist_names, a.name)
+          table.insert(alb_artists, {
+            id = a.id or a.name,
+            name = a.name,
+            coverUrl = ""
+          })
+        end
+      end
+      local cover = nil
+      if res.images and #res.images > 0 then
+        cover = res.images[1].url
+      end
+
+      local year = nil
+      if res.release_date and string.len(res.release_date) >= 4 then
+        year = tonumber(string.sub(res.release_date, 1, 4))
+      end
+
+      local song_count = res.total_tracks or (res.tracks and res.tracks.total) or 0
+      local album_obj = {
+        id = clean_id,
+        name = res.name,
+        title = res.name,
+        artist = table.concat(artist_names, ", "),
+        artists = alb_artists,
+        cover = cover,
+        coverUrl = cover,
+        year = year,
+        releaseDate = res.release_date,
+        songCount = song_count,
+        trackCount = song_count,
+        description = res.label or "",
+        provider = "spotube"
+      }
+
+      -- 缓存首批歌曲元数据
+      if res.tracks and res.tracks.items then
+        for _, t in ipairs(res.tracks.items) do
+          local t_artists = {}
+          local t_names = {}
+          if t.artists then
+            for _, ta in ipairs(t.artists) do
+              table.insert(t_names, ta.name)
+              table.insert(t_artists, { id = ta.id or ta.name, name = ta.name, coverUrl = "" })
+            end
+          end
+          local t_dur = t.duration_ms or 0
+          local t_meta = {
+            id = t.id,
+            name = t.name,
+            title = t.name,
+            artists = t_artists,
+            artist = table.concat(t_names, ", "),
+            albumName = res.name,
+            albumId = clean_id,
+            cover = cover,
+            coverUrl = cover,
+            duration = math.floor(t_dur / 1000),
+            durationMs = t_dur,
+            provider = "spotube"
+          }
+          store.save_track_meta(t.id, t_meta)
+        end
+      end
+
+      return album_obj
+    end
+  end
+
+  -- 降级方案：从 open.spotify.com/embed/album/<clean_id> 提取 __NEXT_DATA__
+  local embed_url = "https://open.spotify.com/embed/album/" .. tostring(clean_id)
+  local embed_res = http.get(embed_url, {
+    ["User-Agent"] = constants.USER_AGENT_DESKTOP
+  })
+  if embed_res and type(embed_res) == "string" then
+    local tag_start = string.find(embed_res, '<script id="__NEXT_DATA__"', 1, true)
+    if tag_start then
+      local tag_close = string.find(embed_res, ">", tag_start, true)
+      if tag_close then
+        local e_start = string.find(embed_res, "</script>", tag_close + 1, true)
+        if e_start then
+          local json_text = string.sub(embed_res, tag_close + 1, e_start - 1)
+          local data = http.json_decode(json_text)
+          local entity = data and data.props and data.props.pageProps and data.props.pageProps.state and data.props.pageProps.state.data and data.props.pageProps.state.data.entity
+          if entity then
+            local alb_name = entity.title or entity.name or "专辑"
+            local artist_names = {}
+            local alb_artists = {}
+            if entity.artists then
+              for _, a in ipairs(entity.artists) do
+                if a.name then
+                  table.insert(artist_names, a.name)
+                  table.insert(alb_artists, { id = a.uri or a.name, name = a.name, coverUrl = "" })
+                end
+              end
+            end
+            local cover = nil
+            if entity.visualIdentity and entity.visualIdentity.image and #entity.visualIdentity.image > 0 then
+              cover = entity.visualIdentity.image[#entity.visualIdentity.image].url
+            end
+            local song_count = (entity.trackList and #entity.trackList) or 0
+            return {
+              id = clean_id,
+              name = alb_name,
+              title = alb_name,
+              artist = table.concat(artist_names, ", "),
+              artists = alb_artists,
+              cover = cover,
+              coverUrl = cover,
+              songCount = song_count,
+              trackCount = song_count,
+              description = entity.subtitle or "",
+              provider = "spotube"
+            }
+          end
+        end
+      end
+    end
+  end
+
+  return {
+    id = clean_id,
+    name = "Spotify 专辑",
+    title = "Spotify 专辑",
+    cover = nil,
+    coverUrl = nil,
+    songCount = 0,
+    provider = "spotube"
+  }
+end
+
+--- 获取专辑曲目列表
+function spotify_service.get_album_songs(album_id, limit, offset)
+  local raw_id = album_id
+  if type(album_id) == "table" then
+    raw_id = album_id.id or album_id.albumId or album_id.album_id
+  end
+  local clean_id = spotify_service.clean_id(raw_id)
+  if not clean_id or clean_id == "" then return {} end
+
+  local lim = tonumber(limit) or 100
+  local off = tonumber(offset) or 0
+  local songs = {}
+
+  local token = spotify_service.ensure_token()
+  if token then
+    local alb_info = spotify_service.get_album(clean_id)
+    local alb_cover = alb_info and (alb_info.coverUrl or alb_info.cover)
+    local alb_name = alb_info and (alb_info.name or alb_info.title) or ""
+
+    local url = "https://api.spotify.com/v1/albums/" .. tostring(clean_id) .. "/tracks?limit=" .. tostring(lim) .. "&offset=" .. tostring(off)
+    local headers = {
+      ["User-Agent"] = constants.USER_AGENT_DESKTOP,
+      ["Authorization"] = "Bearer " .. tostring(token)
+    }
+    local sp_dc = store.get("sp_dc")
+    if sp_dc and string.len(sp_dc) > 0 then
+      headers["Cookie"] = "sp_dc=" .. tostring(sp_dc)
+    end
+
+    local res = http.get(url, headers)
+    if res and type(res) == "table" and res.items then
+      for _, item in ipairs(res.items) do
+        local artist_names = {}
+        local song_artists = {}
+        if item.artists then
+          for _, a in ipairs(item.artists) do
+            table.insert(artist_names, a.name)
+            table.insert(song_artists, {
+              id = a.id or a.name,
+              name = a.name,
+              coverUrl = ""
+            })
+          end
+        end
+        local dur_ms = item.duration_ms or 0
+        local song_obj = {
+          id = item.id,
+          name = item.name,
+          title = item.name,
+          artists = song_artists,
+          artist = table.concat(artist_names, ", "),
+          album = alb_name,
+          albumName = alb_name,
+          albumId = clean_id,
+          cover = alb_cover,
+          coverUrl = alb_cover,
+          duration = math.floor(dur_ms / 1000),
+          durationMs = dur_ms,
+          provider = "spotube"
+        }
+        store.save_track_meta(item.id, song_obj)
+        table.insert(songs, song_obj)
+      end
+      return songs
+    end
+  end
+
+  -- 降级方案：从 open.spotify.com/embed/album/<clean_id> 提取曲目
+  local embed_url = "https://open.spotify.com/embed/album/" .. tostring(clean_id)
+  local embed_res = http.get(embed_url, {
+    ["User-Agent"] = constants.USER_AGENT_DESKTOP
+  })
+  if embed_res and type(embed_res) == "string" then
+    local tag_start = string.find(embed_res, '<script id="__NEXT_DATA__"', 1, true)
+    if tag_start then
+      local tag_close = string.find(embed_res, ">", tag_start, true)
+      if tag_close then
+        local e_start = string.find(embed_res, "</script>", tag_close + 1, true)
+        if e_start then
+          local json_text = string.sub(embed_res, tag_close + 1, e_start - 1)
+          local data = http.json_decode(json_text)
+          local entity = data and data.props and data.props.pageProps and data.props.pageProps.state and data.props.pageProps.state.data and data.props.pageProps.state.data.entity
+          if entity and entity.trackList then
+            local alb_name = entity.title or entity.name or ""
+            local alb_cover = nil
+            if entity.visualIdentity and entity.visualIdentity.image and #entity.visualIdentity.image > 0 then
+              alb_cover = entity.visualIdentity.image[#entity.visualIdentity.image].url
+            end
+            for _, item in ipairs(entity.trackList) do
+              local t_id = item.id
+              if not t_id and item.uri then
+                local _, parsed_id = spotify_service.parse_link(item.uri)
+                t_id = parsed_id
+              end
+              if t_id then
+                local artist_names = {}
+                local song_artists = {}
+                if item.artists then
+                  for _, a in ipairs(item.artists) do
+                    if a.name then
+                      table.insert(artist_names, a.name)
+                      table.insert(song_artists, { id = a.uri or a.name, name = a.name, coverUrl = "" })
+                    end
+                  end
+                end
+                local dur_ms = tonumber(item.duration) or 0
+                local song_obj = {
+                  id = t_id,
+                  name = item.title or "歌曲",
+                  title = item.title or "歌曲",
+                  artists = song_artists,
+                  artist = table.concat(artist_names, ", "),
+                  album = alb_name,
+                  albumName = alb_name,
+                  albumId = clean_id,
+                  cover = alb_cover,
+                  coverUrl = alb_cover,
+                  duration = math.floor(dur_ms / 1000),
+                  durationMs = dur_ms,
+                  provider = "spotube"
+                }
+                store.save_track_meta(t_id, song_obj)
+                table.insert(songs, song_obj)
+              end
+            end
+            return songs
+          end
+        end
+      end
+    end
+  end
+
+  return songs
 end
 
 return spotify_service

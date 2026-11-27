@@ -54,7 +54,13 @@ function plugin.call(operation, args)
       limit = tonumber(args.limit) or 20
       offset = tonumber(args.offset) or 0
     end
-    return spotify.search(query, limit, offset)
+    local res = spotify.search(query, limit, offset)
+    if res and res.artists then
+      for _, art in ipairs(res.artists) do
+        art.coverUrl = art.coverUrl or art.avatarUrl or art.avatar
+      end
+    end
+    return res
   elseif operation == "playlists" then
     local feed = spotify.get_home_feed()
     return feed.playlists or {}
@@ -63,11 +69,25 @@ function plugin.call(operation, args)
   elseif operation == "playlistSongs" then
     local res = spotify.get_playlist(args)
     return (res and res.songs) or {}
+  elseif operation == "album" then
+    return spotify.get_album(args)
+  elseif operation == "albumSongs" then
+    local limit = 100
+    local offset = 0
+    local id = args
+    if type(args) == "table" then
+      id = args.id or args.albumId or args.album_id
+      limit = tonumber(args.limit) or 100
+      offset = tonumber(args.offset) or 0
+    end
+    return spotify.get_album_songs(id, limit, offset)
   elseif operation == "homeFeed" then
     local feed = spotify.get_home_feed()
     return {
-      featuredPlaylists = feed.playlists,
-      charts = feed.charts
+      editorialPlaylists = feed.editorialPlaylists or feed.charts or {},
+      recommended = feed.recommended or feed.playlists or {},
+      playlists = feed.playlists or {},
+      charts = feed.charts or {}
     }
   elseif operation == "charts" then
     local feed = spotify.get_home_feed()

@@ -1,7 +1,7 @@
 {
   "id": "community.spotube.music",
   "name": "Spotube",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "专为 Lazer 打造的 Spotube (Spotify) 混合架构扩展插件：基于 Spotify 官方元数据与 YouTube 纯净音频流，支持 Cookie 登录与全球榜单检索。",
   "author": "VincentZyu",
   "entry": "main.lua",
