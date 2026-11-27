@@ -1476,7 +1476,7 @@ function spotify_service.get_library_tracks(limit, offset)
       local track_wrapper = row.track
       local data = track_wrapper and track_wrapper.data
       if data then
-        local raw_uri = data.uri or ""
+        local raw_uri = (track_wrapper and (track_wrapper._uri or track_wrapper.uri)) or data.uri or data.id or ""
         local t_id = spotify_service.clean_id(raw_uri)
         if string.len(t_id) > 0 then
           local t_name = data.name or "歌曲"
@@ -1485,10 +1485,11 @@ function spotify_service.get_library_tracks(limit, offset)
           if data.artists and data.artists.items then
             for _, a in ipairs(data.artists.items) do
               local a_name = (a.profile and a.profile.name) or a.name or ""
+              local a_uri = a.uri or (a.profile and a.profile.uri) or a_name
               if string.len(a_name) > 0 then
                 table.insert(artist_names, a_name)
                 table.insert(song_artists, {
-                  id = spotify_service.clean_id(a.uri or a_name),
+                  id = spotify_service.clean_id(a_uri),
                   name = a_name,
                   coverUrl = ""
                 })
@@ -1506,7 +1507,9 @@ function spotify_service.get_library_tracks(limit, offset)
             end
           end
           local dur_ms = 0
-          if data.trackDuration and data.trackDuration.totalMilliseconds then
+          if data.duration and data.duration.totalMilliseconds then
+            dur_ms = tonumber(data.duration.totalMilliseconds) or 0
+          elseif data.trackDuration and data.trackDuration.totalMilliseconds then
             dur_ms = tonumber(data.trackDuration.totalMilliseconds) or 0
           end
 
