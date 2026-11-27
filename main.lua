@@ -98,60 +98,83 @@ function plugin.call(operation, args)
     end
     return res
   elseif operation == "lyrics" then
-    local ok, ret = pcall(function()
-      local title = args.title or args.name
-      local artist = args.artist
-      local album = args.album
-      local duration = args.duration or (args.durationMs and (args.durationMs / 1000))
-      local song_id = args.id or args.songId
+    local store = require("spotube.core.store")
+    local dbg = {
+      args = args,
+      op = "lyrics",
+      time = (host and host.now and host.now()) or 0,
+      steps = {}
+    }
+    local function log_step(step_name, detail)
+      table.insert(dbg.steps, { step = step_name, detail = detail })
+      store.set("debug_lyrics_latest", dbg)
+      if host and host.log then
+        pcall(host.log, "info", "[spotube lyrics] " .. tostring(step_name), detail or {})
+      end
+    end
 
-      -- Lazer 宿主在播放页通常只传递 song_id，需自愈补全歌曲标题与歌手
-      if (not title or title == "") and song_id then
-        local clean_id = spotify.clean_id(song_id)
-        local meta = require("spotube.core.store").get_track_meta(clean_id)
-        if meta and (meta.title or meta.name) then
-          title = meta.title or meta.name
-          artist = artist or meta.artist
-          album = album or meta.albumName
-          duration = duration or (meta.durationMs and (meta.durationMs / 1000))
+    log_step("1_start", { args = args })
+
+    local song_id = type(args) == "table" and (args.id or args.songId) or tostring(args or "")
+    local title = type(args) == "table" and (args.title or args.name) or nil
+    local artist = type(args) == "table" and args.artist or nil
+    local album = type(args) == "table" and (args.album or args.albumName) or nil
+    local duration = type(args) == "table" and (args.duration or (args.durationMs and (args.durationMs / 1000))) or nil
+
+    if (not title or title == "") and song_id and song_id ~= "" then
+      local clean_id = spotify.clean_id(song_id)
+      log_step("2_resolve_id", { raw_id = song_id, clean_id = clean_id })
+
+      local meta = store.get_track_meta(clean_id)
+      if meta and (meta.title or meta.name) then
+        title = meta.title or meta.name
+        artist = artist or meta.artist
+        album = album or meta.albumName
+        duration = duration or (meta.durationMs and (meta.durationMs / 1000))
+        log_step("3_found_store_meta", { title = title, artist = artist, album = album, duration = duration })
+      else
+        log_step("3_store_meta_miss", { clean_id = clean_id })
+        local detail = spotify.get_track_detail(clean_id)
+        if detail and (detail.title or detail.name) then
+          title = detail.title or detail.name
+          artist = artist or detail.artist
+          album = album or detail.albumName
+          duration = duration or (detail.durationMs and (detail.durationMs / 1000))
+          log_step("3_found_detail_meta", { title = title, artist = artist, album = album, duration = duration })
         else
-          local detail = spotify.get_track_detail(clean_id)
-          if detail and (detail.title or detail.name) then
-            title = detail.title or detail.name
-            artist = artist or detail.artist
-            album = album or detail.albumName
-            duration = duration or (detail.durationMs and (detail.durationMs / 1000))
-          end
+          log_step("3_detail_meta_failed", { clean_id = clean_id })
         end
       end
+    end
 
-      if not title or title == "" then
-        return {}
-      end
-
-      local res = lyrics.get_lyrics(title, artist, album, duration)
-      if not res or not res.raw_lrc or string.len(res.raw_lrc) == 0 then
-        return {}
-      end
-
-      return {
-        {
-          synced = (res.synced == true or res.hasSynced == true),
-          lines = res.lines or {},
-          lrc = res.raw_lrc,
-          pureMusic = false
-        }
-      }
-    end)
-
-    if not ok then
-      if host and host.log then
-        pcall(host.log, "warn", "spotube lyrics caught error: " .. tostring(ret))
-      end
+    if not title or title == "" then
+      log_step("4_aborted_no_title", { song_id = song_id })
       return {}
     end
 
-    return ret or {}
+    log_step("4_fetching_lrclib", { title = title, artist = artist, album = album, duration = duration })
+
+    local res = lyrics.get_lyrics(title, artist, album, duration, log_step)
+
+    if not res or not res.raw_lrc or string.len(res.raw_lrc) == 0 then
+      log_step("5_lrclib_no_lyrics", { has_res = (res ~= nil) })
+      return {}
+    end
+
+    local out = {
+      {
+        synced = (res.synced == true or res.hasSynced == true),
+        lines = res.lines or {},
+        lrc = res.raw_lrc,
+        pureMusic = false
+      }
+    }
+    log_step("5_success", {
+      synced = out[1].synced,
+      lines_count = #out[1].lines,
+      lrc_len = string.len(out[1].lrc)
+    })
+    return out
   elseif operation == "player_event" then
     return nil
   end

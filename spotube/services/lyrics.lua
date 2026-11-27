@@ -101,8 +101,15 @@ local function parse_lrc(raw_lrc)
 end
 
 --- 从 LRCLib 抓取高精度同步歌词 (100% 对齐 Spotube 官方内置 RealLRCLibLyricsAPI 实现)
-function lyrics_service.get_lyrics(title, artist, album, duration_s)
+function lyrics_service.get_lyrics(title, artist, album, duration_s, log_step)
+  local function log(msg, data)
+    if log_step then
+      log_step("lrclib_" .. msg, data)
+    end
+  end
+
   if not title or string.len(title) == 0 then
+    log("no_title", {})
     return nil
   end
 
@@ -113,6 +120,13 @@ function lyrics_service.get_lyrics(title, artist, album, duration_s)
   local primary_artist = get_primary_artist(artist)
   local clean_title = get_clean_title(title)
   local query_title = (clean_title and clean_title ~= "") and clean_title or title
+
+  log("query_prep", {
+    query_title = query_title,
+    primary_artist = primary_artist,
+    clean_title = clean_title,
+    duration_s = duration_s
+  })
 
   local res = nil
 
@@ -125,7 +139,14 @@ function lyrics_service.get_lyrics(title, artist, album, duration_s)
     q1 = q1 .. "&duration=" .. tostring(math.floor(tonumber(duration_s)))
   end
 
-  local r1 = http.get(constants.HOST_LRCLIB .. "/api/get?" .. q1, headers)
+  local u1 = constants.HOST_LRCLIB .. "/api/get?" .. q1
+  log("stage1_request", { url = u1 })
+  local r1, err1 = http.get(u1, headers)
+  log("stage1_response", {
+    is_table = type(r1) == "table",
+    has_synced = (type(r1) == "table" and r1.syncedLyrics ~= nil and string.len(tostring(r1.syncedLyrics)) > 0),
+    err = err1
+  })
   if r1 and type(r1) == "table" then
     res = r1
   end
@@ -136,7 +157,14 @@ function lyrics_service.get_lyrics(title, artist, album, duration_s)
     if primary_artist and string.len(primary_artist) > 0 then
       q2 = q2 .. "&artist_name=" .. url_encode(primary_artist)
     end
-    local r2 = http.get(constants.HOST_LRCLIB .. "/api/get?" .. q2, headers)
+    local u2 = constants.HOST_LRCLIB .. "/api/get?" .. q2
+    log("stage2_request", { url = u2 })
+    local r2, err2 = http.get(u2, headers)
+    log("stage2_response", {
+      is_table = type(r2) == "table",
+      has_synced = (type(r2) == "table" and r2.syncedLyrics ~= nil and string.len(tostring(r2.syncedLyrics)) > 0),
+      err = err2
+    })
     if r2 and type(r2) == "table" and r2.syncedLyrics and string.len(tostring(r2.syncedLyrics)) > 0 then
       res = r2
     elseif not res and r2 and type(r2) == "table" then
@@ -148,7 +176,13 @@ function lyrics_service.get_lyrics(title, artist, album, duration_s)
   if not res or not res.syncedLyrics or string.len(tostring(res.syncedLyrics)) == 0 then
     local search_terms = query_title .. (primary_artist ~= "" and (" " .. primary_artist) or "")
     local s_url = constants.HOST_LRCLIB .. "/api/search?q=" .. url_encode(search_terms)
-    local s_res = http.get(s_url, headers)
+    log("stage3_request", { url = s_url })
+    local s_res, err3 = http.get(s_url, headers)
+    log("stage3_response", {
+      is_table = type(s_res) == "table",
+      count = (type(s_res) == "table" and #s_res) or 0,
+      err = err3
+    })
     if s_res and type(s_res) == "table" and #s_res > 0 then
       local found_synced = false
       for _, it in ipairs(s_res) do
@@ -167,7 +201,13 @@ function lyrics_service.get_lyrics(title, artist, album, duration_s)
   -- 4. 第四阶：若检索 title + artist 仍未找到任何结果，使用 query_title 单独发起检索
   if not res or not res.syncedLyrics or string.len(tostring(res.syncedLyrics)) == 0 then
     local s_url2 = constants.HOST_LRCLIB .. "/api/search?q=" .. url_encode(query_title)
-    local s_res2 = http.get(s_url2, headers)
+    log("stage4_request", { url = s_url2 })
+    local s_res2, err4 = http.get(s_url2, headers)
+    log("stage4_response", {
+      is_table = type(s_res2) == "table",
+      count = (type(s_res2) == "table" and #s_res2) or 0,
+      err = err4
+    })
     if s_res2 and type(s_res2) == "table" and #s_res2 > 0 then
       for _, it in ipairs(s_res2) do
         if it.syncedLyrics and string.len(tostring(it.syncedLyrics)) > 0 then
@@ -182,6 +222,7 @@ function lyrics_service.get_lyrics(title, artist, album, duration_s)
   end
 
   if not res or type(res) ~= "table" then
+    log("no_result_found", {})
     return nil
   end
 
@@ -201,6 +242,7 @@ function lyrics_service.get_lyrics(title, artist, album, duration_s)
   -- 关键保障：Lazer 宿主在 _parsePlainLrc 中严格校验 [mm:ss.xx]，无时间戳的行会被完全丢弃！
   -- 格式化为 stepped LRC 确保 Lazer 能够完整解析每一行并正常呈现滚动/纯文本歌词视图
   if not is_synced and res.plainLyrics and string.len(res.plainLyrics) > 0 then
+    log("formatting_plain_lyrics_to_stepped", { len = string.len(res.plainLyrics) })
     local plain_lines = {}
     for line in string.gmatch(res.plainLyrics, "[^\r\n]+") do
       local fb = 1
@@ -235,8 +277,15 @@ function lyrics_service.get_lyrics(title, artist, album, duration_s)
   end
 
   if not raw_lrc or string.len(raw_lrc) == 0 then
+    log("no_raw_lrc_generated", {})
     return nil
   end
+
+  log("final_lrc_ready", {
+    is_synced = is_synced,
+    lines_count = #lines,
+    raw_lrc_len = string.len(raw_lrc)
+  })
 
   return {
     lines = lines,
