@@ -19,6 +19,30 @@ local function url_encode(str)
   return s
 end
 
+-- 提取首要歌手（剥离多歌手拼接、feat、ft 等，对齐 Spotube 检索规范）
+local function get_primary_artist(artist_str)
+  if not artist_str or artist_str == "" then return "" end
+  local first = string.match(artist_str, "^([^,;/&、]+)")
+  if not first then first = artist_str end
+  first = string.gsub(first, "%s*[fF]eat%..*$", "")
+  first = string.gsub(first, "%s*[fF]t%..*$", "")
+  first = string.match(first, "^%s*(.-)%s*$") or first
+  return first
+end
+
+-- 清洗歌曲标题（剥离 (feat. ...), [feat. ...], - Remastered 等副标题）
+local function get_clean_title(title_str)
+  if not title_str or title_str == "" then return "" end
+  local s = string.gsub(title_str, "%s*%(feat%..-%)$", "")
+  s = string.gsub(s, "%s*%[feat%..-%]$", "")
+  s = string.gsub(s, "%s*%(ft%..-%)$", "")
+  s = string.gsub(s, "%s*%[ft%..-%]$", "")
+  s = string.gsub(s, "%s*%-.*[rR]emaster.*$", "")
+  s = string.gsub(s, "%s*%(.*[rR]emaster.*%)$", "")
+  s = string.match(s, "^%s*(.-)%s*$") or s
+  return s
+end
+
 -- 解析标准 LRC 文本为带有高精度时间轴的行 (对齐 Lazer MusicLyricLine 要求: text 与 startMs)
 local function parse_lrc(raw_lrc)
   if not raw_lrc or raw_lrc == "" then return {} end
@@ -86,32 +110,45 @@ function lyrics_service.get_lyrics(title, artist, album, duration_s)
     ["User-Agent"] = "Spotube/v6.0.0 (https://github.com/KRTirtho/spotube)"
   }
 
+  local primary_artist = get_primary_artist(artist)
+  local clean_title = get_clean_title(title)
+  local query_title = (clean_title and clean_title ~= "") and clean_title or title
+
   local res = nil
 
-  -- 1. 第一阶：精确匹配 /api/get (track_name + artist_name + duration)
-  local query_params = "track_name=" .. url_encode(title)
-  if artist and string.len(artist) > 0 then
-    query_params = query_params .. "&artist_name=" .. url_encode(artist)
-  end
-  if album and string.len(album) > 0 then
-    query_params = query_params .. "&album_name=" .. url_encode(album)
+  -- 1. 第一阶：精确单曲匹配 /api/get (clean_title + primary_artist + duration)
+  local q1 = "track_name=" .. url_encode(query_title)
+  if primary_artist and string.len(primary_artist) > 0 then
+    q1 = q1 .. "&artist_name=" .. url_encode(primary_artist)
   end
   if duration_s and tonumber(duration_s) and tonumber(duration_s) > 0 then
-    query_params = query_params .. "&duration=" .. tostring(math.floor(tonumber(duration_s)))
+    q1 = q1 .. "&duration=" .. tostring(math.floor(tonumber(duration_s)))
   end
 
-  local url = constants.HOST_LRCLIB .. "/api/get?" .. query_params
-  res = http.get(url, headers)
+  local r1 = http.get(constants.HOST_LRCLIB .. "/api/get?" .. q1, headers)
+  if r1 and type(r1) == "table" then
+    res = r1
+  end
 
-  -- 2. 若精确匹配未命中，或精确匹配仅返回普通文本而缺少 syncedLyrics (如 Living Millennium 与 Kyu-kurarin 官方记录)：
-  -- 严格对齐 Spotube 官方逻辑，通过 /api/search 进行全局检索，优先筛选包含同步时间轴的优质候选
-  if not res or type(res) ~= "table" or not res.syncedLyrics or string.len(tostring(res.syncedLyrics)) == 0 then
-    local search_terms = title
-    if artist and string.len(artist) > 0 then
-      search_terms = search_terms .. " " .. artist
+  -- 2. 第二阶：若精确匹配未命中或缺少 syncedLyrics，去除 duration 再次尝试 /api/get (宽容模式)
+  if not res or not res.syncedLyrics or string.len(tostring(res.syncedLyrics)) == 0 then
+    local q2 = "track_name=" .. url_encode(query_title)
+    if primary_artist and string.len(primary_artist) > 0 then
+      q2 = q2 .. "&artist_name=" .. url_encode(primary_artist)
     end
-    local search_url = constants.HOST_LRCLIB .. "/api/search?q=" .. url_encode(search_terms)
-    local s_res = http.get(search_url, headers)
+    local r2 = http.get(constants.HOST_LRCLIB .. "/api/get?" .. q2, headers)
+    if r2 and type(r2) == "table" and r2.syncedLyrics and string.len(tostring(r2.syncedLyrics)) > 0 then
+      res = r2
+    elseif not res and r2 and type(r2) == "table" then
+      res = r2
+    end
+  end
+
+  -- 3. 第三阶：若仍未命中 syncedLyrics，通过 /api/search 进行全局检索 (clean_title + primary_artist)
+  if not res or not res.syncedLyrics or string.len(tostring(res.syncedLyrics)) == 0 then
+    local search_terms = query_title .. (primary_artist ~= "" and (" " .. primary_artist) or "")
+    local s_url = constants.HOST_LRCLIB .. "/api/search?q=" .. url_encode(search_terms)
+    local s_res = http.get(s_url, headers)
     if s_res and type(s_res) == "table" and #s_res > 0 then
       local found_synced = false
       for _, it in ipairs(s_res) do
@@ -121,8 +158,25 @@ function lyrics_service.get_lyrics(title, artist, album, duration_s)
           break
         end
       end
-      if not found_synced and (not res or type(res) ~= "table" or not res.plainLyrics) then
+      if not found_synced and (not res or not res.plainLyrics) then
         res = s_res[1]
+      end
+    end
+  end
+
+  -- 4. 第四阶：若检索 title + artist 仍未找到任何结果，使用 query_title 单独发起检索
+  if not res or not res.syncedLyrics or string.len(tostring(res.syncedLyrics)) == 0 then
+    local s_url2 = constants.HOST_LRCLIB .. "/api/search?q=" .. url_encode(query_title)
+    local s_res2 = http.get(s_url2, headers)
+    if s_res2 and type(s_res2) == "table" and #s_res2 > 0 then
+      for _, it in ipairs(s_res2) do
+        if it.syncedLyrics and string.len(tostring(it.syncedLyrics)) > 0 then
+          res = it
+          break
+        end
+      end
+      if not res and s_res2[1] then
+        res = s_res2[1]
       end
     end
   end
