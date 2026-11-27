@@ -96,7 +96,8 @@ function spotify_service.ensure_token(force_refresh)
             if exp_ms and exp_ms > 0 then
               store.set("sp_token_exp", math.floor(exp_ms / 1000))
             else
-              store.set("sp_token_exp", (now_s > 0 and now_s or 1795730121) + 2700)
+              local ts = now_s > 0 and now_s or (os.time and os.time() or 1795801380)
+              store.set("sp_token_exp", ts + 2700)
             end
             return session.accessToken
           end
@@ -1447,7 +1448,16 @@ function spotify_service.pathfinder_query(operation_name, hash, variables)
     headers["client-token"] = tostring(client_token)
   end
 
-  return http.post(url, payload, headers)
+  local res, err = http.post(url, payload, headers)
+  if not res or (type(res) == "table" and res.error) then
+    local fresh_token = spotify_service.ensure_token(true)
+    if fresh_token and fresh_token ~= access_token then
+      access_token = fresh_token
+      headers["Authorization"] = "Bearer " .. tostring(access_token)
+      res, err = http.post(url, payload, headers)
+    end
+  end
+  return res, err
 end
 
 --- 获取用户云端已赞歌曲 (Pathfinder fetchLibraryTracks)
@@ -1594,7 +1604,7 @@ function spotify_service.get_user_playlists(limit, offset)
       local items = res.data.me.libraryV3.items
       for _, it in ipairs(items) do
         local item_wrap = it and it.item
-        local raw_uri = item_wrap and (item_wrap._uri or item_wrap.uri) or ""
+        local raw_uri = item_wrap and (item_wrap._uri or item_wrap.uri or (item_wrap.data and item_wrap.data.uri)) or ""
         if string.find(raw_uri, "playlist", 1, true) then
           local p_id = spotify_service.clean_id(raw_uri)
           local p_data = item_wrap.data or {}
@@ -1632,9 +1642,7 @@ function spotify_service.get_user_playlists(limit, offset)
         end
       end
 
-      if #playlists > 0 then
-        return playlists
-      end
+      return playlists
     end
   end
 
@@ -1754,8 +1762,9 @@ function spotify_service.get_artist_overview_data(cid)
   local hash = "eafb1620d783ece118e72fbfede2b0064483e029d3c1aafafa1c2de0e25a89e7"
   local res, err = spotify_service.pathfinder_query("queryArtistOverview", hash, {
     uri = "spotify:artist:" .. cid,
-    locale = "zh-CN",
-    includePrerelease = true
+    locale = "",
+    preReleaseV2 = false,
+    includeMusicVideoPreviews = false
   })
 
   if res and type(res) == "table" and res.data and res.data.artistUnion and res.data.artistUnion.__typename ~= "NotFound" then
@@ -1865,6 +1874,10 @@ function spotify_service.get_artist_top_tracks(artist_id, offset)
           cover = (srcs[#srcs] and srcs[#srcs].url) or (srcs[1] and srcs[1].url)
         elseif alb.images and #alb.images > 0 then
           cover = alb.images[1].url
+        end
+        if not cover and tr.coverArt and tr.coverArt.sources and #tr.coverArt.sources > 0 then
+          local srcs = tr.coverArt.sources
+          cover = (srcs[#srcs] and srcs[#srcs].url) or (srcs[1] and srcs[1].url)
         end
         local arts = {}
         local art_names = {}
