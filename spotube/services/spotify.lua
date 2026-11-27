@@ -894,17 +894,59 @@ function spotify_service.get_home_feed()
   }
 end
 
---- 根据 Spotify Track ID 查询单曲详情与真实专辑封面 (方案 A：通过 open.spotify.com/embed/track/<id> 抓取官方 visualIdentity 640x640 独立专辑封面)
+--- 根据 Spotify Track ID 查询单曲详情与真实专辑封面
 function spotify_service.get_track_detail(track_id)
   local pure_id = spotify_service.clean_id(track_id)
   if not pure_id or pure_id == "" then return nil end
 
   local cached_meta = store.get_track_meta(pure_id)
-  if cached_meta and cached_meta.coverUrl and cached_meta.coverUrl ~= "" then
+  if cached_meta and (cached_meta.title or cached_meta.name) and (cached_meta.coverUrl or cached_meta.artist) then
     return cached_meta
   end
 
-  -- 1. 方案 A：从 open.spotify.com/embed/track/<pure_id> 免鉴权直接抓取官方 640x640 独立专辑封面与完整曲目元数据
+  -- 1. 优先尝试轻量级官方 Web API (毫秒级响应，数据完整且精准包含 640x640 封面与曲目信息)
+  local token = spotify_service.ensure_token()
+  if token then
+    local url = "https://api.spotify.com/v1/tracks/" .. tostring(pure_id)
+    local headers = {
+      ["User-Agent"] = constants.USER_AGENT_DESKTOP,
+      ["Authorization"] = "Bearer " .. tostring(token)
+    }
+    local res = http.get(url, headers)
+    if res and type(res) == "table" and res.name then
+      local artist_names = {}
+      local song_artists = {}
+      if res.artists then
+        for _, a in ipairs(res.artists) do
+          table.insert(artist_names, a.name)
+          table.insert(song_artists, { id = a.id or a.name, name = a.name })
+        end
+      end
+      local cover = nil
+      if res.album and res.album.images and res.album.images[1] then
+        cover = res.album.images[1].url
+      end
+      local dur_ms = res.duration_ms or 0
+      local track_obj = {
+        id = res.id or pure_id,
+        name = res.name,
+        title = res.name,
+        artists = song_artists,
+        artist = table.concat(artist_names, ", "),
+        albumName = res.album and res.album.name or "",
+        albumId = res.album and res.album.id or "",
+        cover = cover,
+        coverUrl = cover,
+        duration = math.floor(dur_ms / 1000),
+        durationMs = dur_ms,
+        provider = "spotube"
+      }
+      store.save_track_meta(pure_id, track_obj)
+      return track_obj
+    end
+  end
+
+  -- 2. 方案 A：从 open.spotify.com/embed/track/<pure_id> 免鉴权抓取官方 640x640 独立专辑封面与完整曲目元数据
   local embed_url = "https://open.spotify.com/embed/track/" .. tostring(pure_id)
   local embed_res = http.get(embed_url, {
     ["User-Agent"] = constants.USER_AGENT_DESKTOP
@@ -967,48 +1009,6 @@ function spotify_service.get_track_detail(track_id)
           end
         end
       end
-    end
-  end
-
-  -- 2. 降级尝试 Web API (若 Token 有效)
-  local token = spotify_service.ensure_token()
-  if token then
-    local url = "https://api.spotify.com/v1/tracks/" .. tostring(pure_id)
-    local headers = {
-      ["User-Agent"] = constants.USER_AGENT_DESKTOP,
-      ["Authorization"] = "Bearer " .. tostring(token)
-    }
-    local res = http.get(url, headers)
-    if res and type(res) == "table" and res.name then
-      local artist_names = {}
-      local song_artists = {}
-      if res.artists then
-        for _, a in ipairs(res.artists) do
-          table.insert(artist_names, a.name)
-          table.insert(song_artists, { id = a.id or a.name, name = a.name })
-        end
-      end
-      local cover = nil
-      if res.album and res.album.images and res.album.images[1] then
-        cover = res.album.images[1].url
-      end
-      local dur_ms = res.duration_ms or 0
-      local track_obj = {
-        id = res.id or pure_id,
-        name = res.name,
-        title = res.name,
-        artists = song_artists,
-        artist = table.concat(artist_names, ", "),
-        albumName = res.album and res.album.name or "",
-        albumId = res.album and res.album.id or "",
-        cover = cover,
-        coverUrl = cover,
-        duration = math.floor(dur_ms / 1000),
-        durationMs = dur_ms,
-        provider = "spotube"
-      }
-      store.save_track_meta(pure_id, track_obj)
-      return track_obj
     end
   end
 

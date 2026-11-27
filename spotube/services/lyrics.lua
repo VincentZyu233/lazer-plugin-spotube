@@ -79,10 +79,12 @@ function lyrics_service.get_lyrics(title, artist, album, duration_s)
   end
 
   local headers = {
-    ["User-Agent"] = "Spotube/v6.0.0 LRCLib Lyric Plugin"
+    ["User-Agent"] = "Spotube/v6.0.0 (https://github.com/KRTirtho/spotube)"
   }
 
-  -- 1. 第一阶：精确匹配 /api/get (对标 Spotube: track_name, artist_name, album_name, duration)
+  local res = nil
+
+  -- 1. 第一阶：精确匹配 /api/get (track_name + artist_name + duration)
   local query_params = "track_name=" .. url_encode(title)
   if artist and string.len(artist) > 0 then
     query_params = query_params .. "&artist_name=" .. url_encode(artist)
@@ -95,9 +97,22 @@ function lyrics_service.get_lyrics(title, artist, album, duration_s)
   end
 
   local url = constants.HOST_LRCLIB .. "/api/get?" .. query_params
-  local res = http.get(url, headers)
+  res = http.get(url, headers)
 
-  -- 2. 第二阶：若精确匹配未命中或缺少同步时间轴，通过 /api/search 进行模糊兜底，优先获取同步歌词 (Spotube 官方机制)
+  -- 2. 第二阶：若因 album 或 duration 偏差未命中，去除 duration 与 album 再次尝试 /api/get (秒级轻量单曲接口)
+  if not res or type(res) ~= "table" or (not res.syncedLyrics and not res.plainLyrics) then
+    local relax_query = "track_name=" .. url_encode(title)
+    if artist and string.len(artist) > 0 then
+      relax_query = relax_query .. "&artist_name=" .. url_encode(artist)
+    end
+    local relax_url = constants.HOST_LRCLIB .. "/api/get?" .. relax_query
+    local r_res = http.get(relax_url, headers)
+    if r_res and type(r_res) == "table" and (r_res.syncedLyrics or r_res.plainLyrics) then
+      res = r_res
+    end
+  end
+
+  -- 3. 第三阶：若仍未命中或缺少时间轴，通过 /api/search 进行模糊检索兜底 (优先选取包含 syncedLyrics 的候选)
   if not res or type(res) ~= "table" or not res.syncedLyrics or string.len(tostring(res.syncedLyrics)) == 0 then
     local search_q = url_encode(title .. (artist and (" " .. artist) or ""))
     local search_url = constants.HOST_LRCLIB .. "/api/search?q=" .. search_q
@@ -149,8 +164,8 @@ function lyrics_service.get_lyrics(title, artist, album, duration_s)
     lines = lines,
     raw_lrc = raw_lrc,
     source = "lrclib",
-    synced = (res.syncedLyrics ~= nil and #lines > 0),
-    hasSynced = (res.syncedLyrics ~= nil and #lines > 0)
+    synced = (res.syncedLyrics ~= nil and string.len(tostring(res.syncedLyrics)) > 0 and #lines > 0),
+    hasSynced = (res.syncedLyrics ~= nil and string.len(tostring(res.syncedLyrics)) > 0 and #lines > 0)
   }
 end
 
