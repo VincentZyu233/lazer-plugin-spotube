@@ -89,6 +89,9 @@ function spotify_service.ensure_token(force_refresh)
           local session = data and data.props and data.props.pageProps and data.props.pageProps.state and data.props.pageProps.state.settings and data.props.pageProps.state.settings.session
           if session and session.accessToken and string.len(session.accessToken) > 20 then
             store.set("sp_access_token", session.accessToken)
+            if session.clientId then
+              store.set("sp_client_id", session.clientId)
+            end
             local exp_ms = tonumber(session.accessTokenExpirationTimestampMs)
             if exp_ms and exp_ms > 0 then
               store.set("sp_token_exp", math.floor(exp_ms / 1000))
@@ -1355,6 +1358,202 @@ function spotify_service.get_album_songs(album_id, limit, offset)
   end
 
   return songs
+end
+
+--- 获取有效 ClientToken (向 clienttoken.spotify.com 申请，有效期内自动复用)
+function spotify_service.ensure_client_token(force_refresh)
+  local cached_token = store.get("sp_client_token")
+  local cached_exp = store.get("sp_client_token_exp") or 0
+  local now_s = current_time_seconds()
+
+  if not force_refresh and cached_token and string.len(tostring(cached_token)) > 20 then
+    if now_s > 0 and cached_exp > (now_s + 180) then
+      return cached_token
+    elseif now_s == 0 and cached_exp > 0 then
+      return cached_token
+    end
+  end
+
+  local client_id = store.get("sp_client_id") or "d8a5ed958d274c2e8ee717e6a4b0971d"
+  local client_version = "1.3.13.98.g35b7f62dc103"
+
+  local payload = {
+    client_data = {
+      client_version = client_version,
+      client_id = client_id,
+      js_sdk_data = {
+        device_brand = "unknown",
+        device_model = "unknown",
+        os = "windows",
+        os_version = "10",
+        device_id = "0d36a364-a220-4ad7-af81-e9248ad68562",
+        device_type = "computer"
+      }
+    }
+  }
+
+  local headers = {
+    ["User-Agent"] = constants.USER_AGENT_DESKTOP,
+    ["Accept"] = "application/json",
+    ["Content-Type"] = "application/json"
+  }
+
+  local res = http.post(constants.HOST_CLIENT_TOKEN, payload, headers)
+  if res and type(res) == "table" and res.granted_token and res.granted_token.token then
+    local ct = res.granted_token.token
+    store.set("sp_client_token", ct)
+    local refresh_after = tonumber(res.granted_token.refresh_after_seconds) or 1800
+    store.set("sp_client_token_exp", (now_s > 0 and now_s or 1795730121) + refresh_after)
+    return ct
+  end
+
+  return cached_token
+end
+
+--- 发送 Pathfinder GraphQL 持久化查询请求
+function spotify_service.pathfinder_query(operation_name, hash, variables)
+  local access_token = spotify_service.ensure_token()
+  if not access_token then
+    return nil, "Missing access token"
+  end
+
+  local client_token = spotify_service.ensure_client_token()
+  local url = constants.HOST_SPOTIFY_PARTNER .. "/pathfinder/v2/query"
+
+  local payload = {
+    operationName = operation_name,
+    variables = variables or {},
+    extensions = {
+      persistedQuery = {
+        version = 1,
+        sha256Hash = hash
+      }
+    }
+  }
+
+  local headers = {
+    ["User-Agent"] = constants.USER_AGENT_DESKTOP,
+    ["Accept"] = "application/json",
+    ["Content-Type"] = "application/json;charset=UTF-8",
+    ["Authorization"] = "Bearer " .. tostring(access_token),
+    ["app-platform"] = "WebPlayer",
+    ["spotify-app-version"] = "1.3.13.98.g35b7f62dc103"
+  }
+  if client_token and string.len(tostring(client_token)) > 0 then
+    headers["client-token"] = tostring(client_token)
+  end
+
+  return http.post(url, payload, headers)
+end
+
+--- 获取用户云端已赞歌曲 (Pathfinder fetchLibraryTracks)
+function spotify_service.get_library_tracks(limit, offset)
+  limit = tonumber(limit) or 50
+  offset = tonumber(offset) or 0
+  if limit > 100 then limit = 100 end
+  if limit < 1 then limit = 50 end
+  if offset < 0 then offset = 0 end
+
+  local sp_dc = store.get("sp_dc")
+  if not sp_dc or string.len(sp_dc) < 10 then
+    return {}
+  end
+
+  local hash = "087278b20b743578a6262c2b0b4bcd20d879c503cc359a2285baf083ef944240"
+  local res, err = spotify_service.pathfinder_query("fetchLibraryTracks", hash, {
+    limit = limit,
+    offset = offset
+  })
+
+  local songs = {}
+  if res and type(res) == "table" and res.data and res.data.me and res.data.me.library and res.data.me.library.tracks and res.data.me.library.tracks.items then
+    local items = res.data.me.library.tracks.items
+    for _, row in ipairs(items) do
+      local track_wrapper = row.track
+      local data = track_wrapper and track_wrapper.data
+      if data then
+        local raw_uri = data.uri or ""
+        local t_id = spotify_service.clean_id(raw_uri)
+        if string.len(t_id) > 0 then
+          local t_name = data.name or "歌曲"
+          local artist_names = {}
+          local song_artists = {}
+          if data.artists and data.artists.items then
+            for _, a in ipairs(data.artists.items) do
+              local a_name = (a.profile and a.profile.name) or a.name or ""
+              if string.len(a_name) > 0 then
+                table.insert(artist_names, a_name)
+                table.insert(song_artists, {
+                  id = spotify_service.clean_id(a.uri or a_name),
+                  name = a_name,
+                  coverUrl = ""
+                })
+              end
+            end
+          end
+          local alb_name = ""
+          local alb_id = ""
+          local alb_cover = ""
+          if data.albumOfTrack then
+            alb_name = data.albumOfTrack.name or ""
+            alb_id = spotify_service.clean_id(data.albumOfTrack.uri or "")
+            if data.albumOfTrack.coverArt and data.albumOfTrack.coverArt.sources and #data.albumOfTrack.coverArt.sources > 0 then
+              alb_cover = data.albumOfTrack.coverArt.sources[1].url or ""
+            end
+          end
+          local dur_ms = 0
+          if data.trackDuration and data.trackDuration.totalMilliseconds then
+            dur_ms = tonumber(data.trackDuration.totalMilliseconds) or 0
+          end
+
+          local song_obj = {
+            id = t_id,
+            name = t_name,
+            title = t_name,
+            artists = song_artists,
+            artist = table.concat(artist_names, ", "),
+            album = alb_name,
+            albumName = alb_name,
+            albumId = alb_id,
+            cover = alb_cover,
+            coverUrl = alb_cover,
+            duration = math.floor(dur_ms / 1000),
+            durationMs = dur_ms,
+            starred = true,
+            provider = "spotube"
+          }
+          store.save_track_meta(t_id, song_obj)
+          table.insert(songs, song_obj)
+        end
+      end
+    end
+  end
+
+  return songs
+end
+
+--- 收藏 / 取消收藏歌曲到 Spotify 云端 (Pathfinder addToLibrary / removeFromLibrary)
+function spotify_service.set_favorite(track_id, is_favorite)
+  local cid = spotify_service.clean_id(track_id)
+  if not cid or string.len(cid) == 0 then
+    return false
+  end
+  local uri = "spotify:track:" .. cid
+  local hash = "896ebcb47815681340860d121cb5d494e157e2a78d3950385cd54e0393c67148"
+
+  if is_favorite then
+    local interaction_id = "0d36a364-a220-4ad7-" .. tostring(current_time_seconds()) .. "-interaction"
+    local res, err = spotify_service.pathfinder_query("addToLibrary", hash, {
+      libraryItemUris = { uri },
+      interactionId = interaction_id
+    })
+    return true
+  else
+    local res, err = spotify_service.pathfinder_query("removeFromLibrary", hash, {
+      libraryItemUris = { uri }
+    })
+    return true
+  end
 end
 
 return spotify_service

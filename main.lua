@@ -9,6 +9,7 @@ local CAPABILITIES = {
   "search",
   "lyrics",
   "playlists",
+  "favorites",
   "browseAlbums",
   "homeFeed",
   "charts"
@@ -92,6 +93,25 @@ function plugin.call(operation, args)
   elseif operation == "charts" then
     local feed = spotify.get_home_feed()
     return feed.charts or {}
+  elseif operation == "favorites" then
+    local limit = 50
+    local offset = 0
+    if type(args) == "table" then
+      limit = tonumber(args.limit) or 50
+      offset = tonumber(args.offset) or 0
+    end
+    return spotify.get_library_tracks(limit, offset)
+  elseif operation == "setFavorite" then
+    local track_id = ""
+    local is_favorite = false
+    if type(args) == "table" then
+      track_id = args.id or args.song or args.trackId or args.track_id or ""
+      is_favorite = (args.favorite == true or args.liked == true)
+    else
+      track_id = tostring(args or "")
+      is_favorite = true
+    end
+    return spotify.set_favorite(track_id, is_favorite)
   elseif operation == "song" then
     local song_id = type(args) == "table" and (args.id or args.songId) or tostring(args or "")
     local detail = spotify.get_track_detail(song_id)
