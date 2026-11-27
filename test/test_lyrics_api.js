@@ -1,6 +1,7 @@
 /**
  * LRCLIB 上游歌词 API 验证脚本
  * 验证 Spotube 所使用的官方上游 LRCLIB (https://lrclib.net) 对歌曲歌词的真实获取情况
+ * 输出格式: Markdown (.md)
  */
 
 const https = require('https');
@@ -43,11 +44,11 @@ function fetchWithProxy(targetUrl) {
         let body = '';
         res.on('data', chunk => body += chunk);
         res.on('end', () => {
-          resolve({ status: res.statusCode, body, mode: 'direct' });
+          resolve({ status: res.statusCode, body, mode: '直连' });
         });
       });
       req.on('error', (err) => reject(err));
-      req.on('timeout', () => { req.destroy(); reject(new Error('Direct timeout')); });
+      req.on('timeout', () => { req.destroy(); reject(new Error('直连超时')); });
     };
 
     if (proxyUrl) {
@@ -74,7 +75,7 @@ function fetchWithProxy(targetUrl) {
               let body = '';
               sres.on('data', chunk => body += chunk);
               sres.on('end', () => {
-                resolve({ status: sres.statusCode, body, mode: 'proxy (' + proxyUrl + ')' });
+                resolve({ status: sres.statusCode, body, mode: `代理 (${proxyUrl})` });
               });
             });
             sreq.on('error', reject);
@@ -106,11 +107,8 @@ async function run() {
   console.log('   LRCLIB (https://lrclib.net) 上游歌词抓取验证');
   console.log('====================================================\n');
 
-  const outputLines = [];
-  outputLines.push('====================================================');
-  outputLines.push('LRCLIB (https://lrclib.net) 歌词接口测试验证输出报告');
-  outputLines.push('测试时间: ' + new Date().toISOString());
-  outputLines.push('====================================================\n');
+  const rows = [];
+  const details = [];
 
   for (let i = 0; i < tracks.length; i++) {
     const t = tracks[i];
@@ -136,48 +134,73 @@ async function run() {
       if (data) {
         const hasSynced = Boolean(data.syncedLyrics && data.syncedLyrics.trim().length > 0);
         const hasPlain = Boolean(data.plainLyrics && data.plainLyrics.trim().length > 0);
+        const lineCount = hasSynced ? data.syncedLyrics.trim().split('\n').length : (hasPlain ? data.plainLyrics.trim().split('\n').length : 0);
         
-        console.log(`     结果: ID=${data.id}, 包含同步歌词(syncedLyrics)=${hasSynced}, 纯文本(plainLyrics)=${hasPlain}`);
-        if (hasSynced) {
-          const lrcLines = data.syncedLyrics.trim().split('\n');
-          console.log(`     歌词行数: ${lrcLines.length} 行`);
-          console.log(`     歌词前 2 行:`);
-          lrcLines.slice(0, 2).forEach(l => console.log(`       ${l}`));
-        }
+        console.log(`     结果: ID=${data.id}, 包含同步歌词(syncedLyrics)=${hasSynced}, 纯文本(plainLyrics)=${hasPlain}, 行数: ${lineCount}`);
 
-        outputLines.push(`----------------------------------------------------`);
-        outputLines.push(`歌曲 [${i + 1}]: ${t.name} - ${t.artist}`);
-        outputLines.push(`请求 URL: ${url}`);
-        outputLines.push(`响应状态码: ${res.status}`);
-        outputLines.push(`网络耗时: ${elapsed} ms (${res.mode})`);
-        outputLines.push(`LRCLIB ID: ${data.id}`);
-        outputLines.push(`歌曲名: ${data.trackName}`);
-        outputLines.push(`歌手: ${data.artistName}`);
-        outputLines.push(`专辑: ${data.albumName || 'N/A'}`);
-        outputLines.push(`是否含有精准时间轴(syncedLyrics): ${hasSynced}`);
-        outputLines.push(`是否含有普通歌词(plainLyrics): ${hasPlain}`);
-        outputLines.push(`\n【完整歌词内容】:\n`);
-        outputLines.push(data.syncedLyrics || data.plainLyrics || '(无歌词内容)');
-        outputLines.push(`\n`);
+        rows.push(`| **${t.name}** | ${t.artist} | ${t.duration}s | **${res.status}** | ${elapsed} ms | ${hasSynced ? '✅ 同步歌词 (Synced)' : (hasPlain ? 'ℹ️ 纯文本 (Plain)' : '❌ 无')} | ${lineCount} 行 |`);
+
+        details.push(`### ${i + 1}. ${t.name} - ${t.artist}\n`);
+        details.push(`- **请求地址**: \`${url}\``);
+        details.push(`- **HTTP 状态**: \`${res.status}\``);
+        details.push(`- **网络耗时**: \`${elapsed} ms\` (${res.mode})`);
+        details.push(`- **LRCLIB ID**: \`${data.id}\``);
+        details.push(`- **曲目信息**: ${data.trackName} / ${data.artistName} (专辑: *${data.albumName || 'N/A'}*)`);
+        details.push(`- **同步时间轴 (\`syncedLyrics\`)**: ${hasSynced ? '✅ 存在' : '❌ 未提供'}`);
+        details.push(`- **纯文本歌词 (\`plainLyrics\`)**: ${hasPlain ? '✅ 存在' : '❌ 未提供'}`);
+        details.push(`- **歌词总行数**: ${lineCount} 行\n`);
+        details.push(`#### 完整歌词内容\n`);
+        details.push('```lrc');
+        details.push(data.syncedLyrics || data.plainLyrics || '(无歌词内容)');
+        details.push('```\n');
       } else {
-        outputLines.push(`----------------------------------------------------`);
-        outputLines.push(`歌曲 [${i + 1}]: ${t.name} - ${t.artist}`);
-        outputLines.push(`请求失败或未返回 JSON: ${res.status}`);
-        outputLines.push(res.body);
-        outputLines.push(`\n`);
+        rows.push(`| **${t.name}** | ${t.artist} | ${t.duration}s | **${res.status}** | ${elapsed} ms | ❌ 解析失败 | 0 行 |`);
+        details.push(`### ${i + 1}. ${t.name} - ${t.artist} (请求失败)\n`);
+        details.push(`- **请求地址**: \`${url}\``);
+        details.push(`- **HTTP 状态**: \`${res.status}\``);
+        details.push(`- **响应内容**:\n\`\`\`\n${res.body}\n\`\`\`\n`);
       }
     } catch (err) {
       console.error(`     请求异常:`, err.message);
-      outputLines.push(`歌曲 [${i + 1}]: ${t.name} - ${t.artist} 请求异常: ${err.message}\n`);
+      rows.push(`| **${t.name}** | ${t.artist} | ${t.duration}s | **ERROR** | - | ❌ 请求异常: ${err.message} | 0 行 |`);
+      details.push(`### ${i + 1}. ${t.name} - ${t.artist} (异常)\n- **错误信息**: ${err.message}\n`);
     }
     console.log('');
   }
 
-  const outputPath = path.join(__dirname, 'lyrics_api_result.txt');
-  fs.writeFileSync(outputPath, outputLines.join('\n'), 'utf8');
+  const mdContent = [
+    '# LRCLIB 上游歌词 API 验证测试报告',
+    '',
+    `> **测试时间**: \`${new Date().toISOString()}\`  `,
+    `> **上游接口**: \`https://lrclib.net/api/get\` (Spotube 官方同款上游源)  `,
+    `> **客户端标识**: \`Spotube/v6.0.0 (https://github.com/KRTirtho/spotube)\`  `,
+    '',
+    '## 📊 测试结果汇总',
+    '',
+    '| 歌曲名 | 歌手 | 时长 | 响应状态 | 网络耗时 | 歌词类型 | 行数 |',
+    '| :--- | :--- | :--- | :--- | :--- | :--- | :--- |',
+    ...rows,
+    '',
+    '---',
+    '',
+    '## 📝 歌曲详细信息与歌词正文',
+    '',
+    ...details
+  ].join('\n');
+
+  // 删除旧的 .txt 文件
+  const txtPath = path.join(__dirname, 'lyrics_api_result.txt');
+  if (fs.existsSync(txtPath)) {
+    fs.unlinkSync(txtPath);
+    console.log(`[Clean] 已删除旧文本文件: ${txtPath}`);
+  }
+
+  // 写入新的 .md 文件
+  const mdPath = path.join(__dirname, 'lyrics_api_result.md');
+  fs.writeFileSync(mdPath, mdContent, 'utf8');
   console.log('====================================================');
-  console.log(`验证完成！完整输出已保存至同级文件:`);
-  console.log(`[FILE] ${outputPath}`);
+  console.log(`验证完成！Markdown 报告已生成至:`);
+  console.log(`[FILE] ${mdPath}`);
   console.log('====================================================');
 }
 

@@ -1,22 +1,35 @@
-====================================================
-LRCLIB (https://lrclib.net) 歌词接口测试验证输出报告
-测试时间: 2026-11-27T04:46:47.051Z
-====================================================
+# LRCLIB 上游歌词 API 验证测试报告
 
-----------------------------------------------------
-歌曲 [1]: kyu-kurarin - Iyowa
-请求 URL: https://lrclib.net/api/get?track_name=kyu-kurarin&artist_name=Iyowa&duration=217
-响应状态码: 200
-网络耗时: 549 ms (proxy (http://127.0.0.1:7890))
-LRCLIB ID: 7441568
-歌曲名: Kyu-kurarin
-歌手: Iyowa
-专辑: Iyowa Songs
-是否含有精准时间轴(syncedLyrics): true
-是否含有普通歌词(plainLyrics): true
+> **测试时间**: `2026-11-27T04:53:04.720Z`  
+> **上游接口**: `https://lrclib.net/api/get` (Spotube 官方同款上游源)  
+> **客户端标识**: `Spotube/v6.0.0 (https://github.com/KRTirtho/spotube)`  
 
-【完整歌词内容】:
+## 📊 测试结果汇总
 
+| 歌曲名 | 歌手 | 时长 | 响应状态 | 网络耗时 | 歌词类型 | 行数 |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **kyu-kurarin** | Iyowa | 217s | **200** | 536 ms | ✅ 同步歌词 (Synced) | 48 行 |
+| **Living Millennium** | Iyowa | 200s | **200** | 474 ms | ℹ️ 纯文本 (Plain) | 44 行 |
+| **Heat abnormal** | Iyowa | 240s | **200** | 528 ms | ✅ 同步歌词 (Synced) | 137 行 |
+
+---
+
+## 📝 歌曲详细信息与歌词正文
+
+### 1. kyu-kurarin - Iyowa
+
+- **请求地址**: `https://lrclib.net/api/get?track_name=kyu-kurarin&artist_name=Iyowa&duration=217`
+- **HTTP 状态**: `200`
+- **网络耗时**: `536 ms` (代理 (http://127.0.0.1:7890))
+- **LRCLIB ID**: `7441568`
+- **曲目信息**: Kyu-kurarin / Iyowa (专辑: *Iyowa Songs*)
+- **同步时间轴 (`syncedLyrics`)**: ✅ 存在
+- **纯文本歌词 (`plainLyrics`)**: ✅ 存在
+- **歌词总行数**: 48 行
+
+#### 完整歌词内容
+
+```lrc
 [00:21.75] うるさく鳴いた 文字盤を見てた
 [00:26.00] きっときっと鏡越し ８時過ぎのにおい
 [00:30.36] しらけた顔 変わってなくてよかった
@@ -65,22 +78,22 @@ LRCLIB ID: 7441568
 [03:29.86] 最後 見たのはそんな夢
 [03:32.26] わたし ちゅうぶらりん
 [03:33.91] 
+```
 
+### 2. Living Millennium - Iyowa
 
-----------------------------------------------------
-歌曲 [2]: Living Millennium - Iyowa
-请求 URL: https://lrclib.net/api/get?track_name=Living%20Millennium&artist_name=Iyowa&duration=200
-响应状态码: 200
-网络耗时: 525 ms (proxy (http://127.0.0.1:7890))
-LRCLIB ID: 10337875
-歌曲名: living millennium
-歌手: Iyowa
-专辑: WATASHI NO HERITAGE
-是否含有精准时间轴(syncedLyrics): false
-是否含有普通歌词(plainLyrics): true
+- **请求地址**: `https://lrclib.net/api/get?track_name=Living%20Millennium&artist_name=Iyowa&duration=200`
+- **HTTP 状态**: `200`
+- **网络耗时**: `474 ms` (代理 (http://127.0.0.1:7890))
+- **LRCLIB ID**: `10337875`
+- **曲目信息**: living millennium / Iyowa (专辑: *WATASHI NO HERITAGE*)
+- **同步时间轴 (`syncedLyrics`)**: ❌ 未提供
+- **纯文本歌词 (`plainLyrics`)**: ✅ 存在
+- **歌词总行数**: 44 行
 
-【完整歌词内容】:
+#### 完整歌词内容
 
+```lrc
 あー
 決まった言葉乗れてまたヒューマン
 ちょっとステキな晒し者 ね
@@ -90,7 +103,7 @@ LRCLIB ID: 10337875
 知らない偉い人が石に文字彫って祈って
 気の狂った誰かがホワイトを塗りたっくた
 ガラクタの上でくどいプロポーズを待って
-あつい口づけを交わすとき鳴りひびくクラクション
+あつい口づけを交わすとき鳴りひびくク��クション
 
 狂ったフリでごまかしていこうぜ
 骨も残らぬパパママよ
@@ -125,22 +138,22 @@ LRCLIB ID: 10337875
 生き汚く生きて 何かを創ったら
 あなたの気持ちが１０００年生きられるかも
 しれないから
+```
 
+### 3. Heat abnormal - Iyowa
 
-----------------------------------------------------
-歌曲 [3]: Heat abnormal - Iyowa
-请求 URL: https://lrclib.net/api/get?track_name=Heat%20abnormal&artist_name=Iyowa&duration=240
-响应状态码: 200
-网络耗时: 595 ms (proxy (http://127.0.0.1:7890))
-LRCLIB ID: 9888808
-歌曲名: Heat abnormal
-歌手: Iyowa
-专辑: Heat abnormal
-是否含有精准时间轴(syncedLyrics): true
-是否含有普通歌词(plainLyrics): true
+- **请求地址**: `https://lrclib.net/api/get?track_name=Heat%20abnormal&artist_name=Iyowa&duration=240`
+- **HTTP 状态**: `200`
+- **网络耗时**: `528 ms` (代理 (http://127.0.0.1:7890))
+- **LRCLIB ID**: `9888808`
+- **曲目信息**: Heat abnormal / Iyowa (专辑: *Heat abnormal*)
+- **同步时间轴 (`syncedLyrics`)**: ✅ 存在
+- **纯文本歌词 (`plainLyrics`)**: ✅ 存在
+- **歌词总行数**: 137 行
 
-【完整歌词内容】:
+#### 完整歌词内容
 
+```lrc
 [00:00.07] 「死んだ変数で繰り返す
 [00:05.38] 数え事が孕んだ熱
 [00:10.58] どこに送るあてもなく
@@ -175,7 +188,7 @@ LRCLIB ID: 9888808
 [00:44.10] 大声で泣いた後
 [00:44.91] 救いの旗に火を放つ人々と
 [00:46.64] コレクションにキスをして
-[00:47.60] 甘んじて棺桶に籠る骸骨が
+[00:47.60] 甘んじて棺桶に籠る��骨が
 [00:48.94] また
 [00:49.52] どうかしてる
 [00:50.17] どうかしてる
@@ -217,7 +230,7 @@ LRCLIB ID: 9888808
 [01:54.70] じきに値がつく
 [01:55.46] 今 背を向けても
 [01:56.00] 背を向けても
-[01:56.69] 背を向けても
+[01:56.69] 背��向けても
 [01:57.16] 背を向けても
 [01:57.68] 背を向けても
 [01:57.87] 背を向けても
@@ -254,7 +267,7 @@ LRCLIB ID: 9888808
 [03:28.60] ついに叶わなかった夢を殺す
 [03:29.71] 思考の成れ果て
 [03:30.52] その中枢には熱異常が起こっている
-[03:32.13] 現実��ゃない
+[03:32.13] 現���じゃない
 [03:32.99] こんなの
 [03:33.58] 現実じゃない
 [03:33.87] こんなの
@@ -278,4 +291,4 @@ LRCLIB ID: 9888808
 [03:46.57] すぐそこまで
 [03:47.09] なにかが来ている」
 [03:48.54] 
-
+```
