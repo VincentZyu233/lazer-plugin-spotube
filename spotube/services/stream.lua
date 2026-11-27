@@ -2,6 +2,7 @@ local constants = require("spotube.core.constants")
 local http = require("spotube.core.http")
 local matcher = require("spotube.matcher.matcher")
 local store = require("spotube.core.store")
+local cache = require("spotube.core.cache")
 local spotify = require("spotube.services.spotify")
 
 local stream_service = {}
@@ -258,7 +259,7 @@ local function extract_player_stream(video_id)
   return nil, "无法获取可播放的音频直链"
 end
 
---- 核心流调度方法：给定 Spotify 歌曲信息或 ID，智能转接并秒级返回直链流
+--- 核心流调度方法：给定 Spotify 歌曲信息或 ID，结合双层缓存与 VideoID 记忆秒级返回直链流
 function stream_service.resolve_stream(args)
   if not args then return nil, "Missing stream arguments" end
 
@@ -277,8 +278,15 @@ function stream_service.resolve_stream(args)
   end
 
   local clean_id = store.clean_id(track_id)
+  local cache_key = clean_id ~= "" and clean_id or (title .. "-" .. artist)
 
-  -- 1. 尝试从本地歌曲元数据缓存补全 title 和 artist
+  -- 1. [L1/L2 双层缓存] 优先检查 2 小时有效期的直接流缓存 (切歌 0 延迟秒开)
+  local cached_stream, cached_vid, cache_tier = cache.get_stream(cache_key)
+  if cached_stream and cached_stream.url then
+    return cached_stream
+  end
+
+  -- 2. 尝试从本地歌曲元数据缓存补全 title 和 artist
   if title == "" or artist == "" then
     local cached_meta = store.get_track_meta(clean_id) or store.get_track_meta(track_id)
     if cached_meta then
@@ -288,7 +296,7 @@ function stream_service.resolve_stream(args)
     end
   end
 
-  -- 2. 补全曲目信息与真实专辑封面 (方案 A：抓取真实 640x640 独立专辑封面)
+  -- 3. 补全曲目信息与真实专辑封面
   local track_detail = nil
   if clean_id ~= "" then
     track_detail = spotify.get_track_detail(clean_id)
@@ -299,14 +307,25 @@ function stream_service.resolve_stream(args)
     end
   end
 
-  -- 3. 先查匹配直链缓存，避免重复检索
-  local cache_key = clean_id ~= "" and clean_id or (title .. "-" .. artist)
-  local cached_stream = store.get_matched_stream(cache_key)
-  if cached_stream and cached_stream.url then
-    return cached_stream
+  -- 4. [L3 永久记忆] 检查是否有此前已完成匹配验证的 YouTube Video ID
+  local remembered_vid = cache.get_matched_vid(cache_key)
+  if remembered_vid and string.len(remembered_vid) > 3 then
+    local direct_stream, direct_err = extract_player_stream(remembered_vid)
+    if direct_stream and direct_stream.url then
+      if track_detail and track_detail.coverUrl then
+        direct_stream.cover = track_detail.coverUrl
+        direct_stream.coverUrl = track_detail.coverUrl
+      end
+      -- 存入 2 小时双层缓存并返回
+      cache.set_stream(cache_key, direct_stream, remembered_vid, 7200)
+      return direct_stream
+    else
+      -- 若已失效的 VideoID 提取失败，清除记忆并重新搜索
+      cache.set_matched_vid(cache_key, nil)
+    end
   end
 
-  -- 4. 构造搜索关键词并进行候选匹配
+  -- 5. 构造搜索关键词并进行候选匹配 (首次播放全新曲目)
   local query = title
   if artist and string.len(artist) > 0 and not string.find(query, artist, 1, true) then
     query = query .. " " .. artist
@@ -333,7 +352,7 @@ function stream_service.resolve_stream(args)
     return nil, "YouTube 未能匹配到对应曲目: " .. query
   end
 
-  -- 5. 提取裸流
+  -- 6. 提取音频裸流
   local stream_res, err = extract_player_stream(best_cand.id)
   if not stream_res then
     return nil, err or "提取音频直链失败"
@@ -347,8 +366,8 @@ function stream_service.resolve_stream(args)
     stream_res.coverUrl = best_cand.cover
   end
 
-  -- 6. 存入直链缓存并返回
-  store.save_matched_stream(cache_key, stream_res)
+  -- 7. 写入 L1 内存 + L2 本地持久化 (TTL 2小时) 并持久化记住 VideoID
+  cache.set_stream(cache_key, stream_res, best_cand.id, 7200)
   return stream_res
 end
 

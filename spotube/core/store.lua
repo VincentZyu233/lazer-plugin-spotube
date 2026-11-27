@@ -105,11 +105,21 @@ function store.clear_cache()
 end
 
 function store.get_matched_stream(track_id)
+  local ok, cache = pcall(require, "spotube.core.cache")
+  if ok and cache and cache.get_stream then
+    local stream = cache.get_stream(track_id)
+    if stream then return stream end
+  end
   if not track_id then return nil end
   return store.get("match:" .. tostring(track_id))
 end
 
-function store.save_matched_stream(track_id, stream_info)
+function store.save_matched_stream(track_id, stream_info, video_id, ttl)
+  local ok, cache = pcall(require, "spotube.core.cache")
+  if ok and cache and cache.set_stream then
+    cache.set_stream(track_id, stream_info, video_id, ttl)
+    return
+  end
   if not track_id or not stream_info then return end
   store.set("match:" .. tostring(track_id), stream_info)
 end

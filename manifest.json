@@ -1,8 +1,8 @@
 {
   "id": "lazer.spotube",
   "name": "Spotube",
-  "version": "0.1.5",
-  "description": "专为 Lazer 打造的 Spotube (Spotify) 混合架构扩展插件：支持快捷授权登录、全球榜单与专辑全域检索、置信度智能音频流匹配、LRCLIB 逐行同步歌词及云端「我喜欢」双向实时同步。",
+  "version": "0.2.0",
+  "description": "专为 Lazer 打造的 Spotube (Spotify) 混合架构扩展插件：支持快捷授权登录、云端歌单与收藏同步、艺人主页生态、智能双层音频流缓存秒开、全域检索及 LRCLIB 逐行动感歌词。",
   "author": "VincentZyu",
   "entry": "main.lua",
   "apiVersion": 1,
@@ -12,7 +12,11 @@
     "search",
     "lyrics",
     "playlists",
+    "userPlaylists",
     "favorites",
+    "artist",
+    "artistSongs",
+    "artistAlbums",
     "browseAlbums",
     "homeFeed",
     "charts"

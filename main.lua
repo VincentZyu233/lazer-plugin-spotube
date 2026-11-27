@@ -12,7 +12,11 @@ local CAPABILITIES = {
   "favorites",
   "browseAlbums",
   "homeFeed",
-  "charts"
+  "charts",
+  "userPlaylists",
+  "artist",
+  "artistSongs",
+  "artistAlbums"
 }
 
 function plugin.call(operation, args)
@@ -62,9 +66,35 @@ function plugin.call(operation, args)
       end
     end
     return res
+  elseif operation == "userPlaylists" then
+    local limit = tonumber(type(args) == "table" and args.limit) or 50
+    local offset = tonumber(type(args) == "table" and args.offset) or 0
+    return spotify.get_user_playlists(limit, offset)
   elseif operation == "playlists" then
+    local store = require("spotube.core.store")
+    local sp_dc = store.get("sp_dc")
+    if sp_dc and string.len(tostring(sp_dc)) > 5 then
+      local limit = tonumber(type(args) == "table" and args.limit) or 50
+      local offset = tonumber(type(args) == "table" and args.offset) or 0
+      local user_pls = spotify.get_user_playlists(limit, offset)
+      if user_pls and user_pls.list and #user_pls.list > 0 then
+        return user_pls.list
+      end
+    end
     local feed = spotify.get_home_feed()
     return feed.playlists or {}
+  elseif operation == "artist" then
+    local a_id = type(args) == "table" and (args.id or args.artistId or args.artist_id) or tostring(args or "")
+    return spotify.get_artist(a_id)
+  elseif operation == "artistSongs" then
+    local a_id = type(args) == "table" and (args.id or args.artistId or args.artist_id) or tostring(args or "")
+    return spotify.get_artist_top_tracks(a_id)
+  elseif operation == "artistAlbums" or operation == "browseAlbums" then
+    local a_id = type(args) == "table" and (args.id or args.artistId or args.artist_id) or tostring(args or "")
+    local limit = tonumber(type(args) == "table" and args.limit) or 50
+    local offset = tonumber(type(args) == "table" and args.offset) or 0
+    local res = spotify.get_artist_albums(a_id, limit, offset)
+    return (res and res.list) or {}
   elseif operation == "playlist" then
     local p_id = type(args) == "table" and (args.id or args.playlistId or args.playlist_id) or tostring(args or "")
     if p_id == "__lazer_favorites__" or string.find(p_id, "favorites", 1, true) then
