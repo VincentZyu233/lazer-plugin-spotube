@@ -117,18 +117,14 @@ Spotify 采用严格的 HttpOnly Cookie (`sp_dc`) 进行 Web 播放鉴权。本�
    ```
 3. 脚本会自动拉起独立的浏览器窗口引导登录；登录成功后，脚本会自动提取 `sp_dc`、解析用户身份、注入到 Lazer 插件存储，并通知 Lazer 客户端自动完成登录并关闭弹窗！
 
-### 方案 B：Lazer 原生浏览器授权联动与 Cookie 填入 (通用方案)
-1. 在 Lazer 左侧进入 **登录** ➔ 音乐平台选择 **Spotube**；
-2. 弹窗内会展示登录二维码以及【在浏览器中打开授权页】按钮；
-3. 点击按钮唤起浏览器登录 Spotify（或直接在日常浏览器中打开并登录 [accounts.spotify.com](https://accounts.spotify.com)）；
-4. 登录完成后，通过以下任一方式完成交接：
-   - **方式一（手动提取 Cookie，直接且通用）**：
-     1. 在浏览器页面按键盘 **`F12`** 键（或右键选择“检查”）打开开发者工具（DevTools）；
-     2. 切换到顶部的 **`Application`（应用）** 标签页；
-     3. 在左侧菜单栏展开 **`Storage`（存储）** ➔ **`Cookies`** ➔ 点击 **`https://accounts.spotify.com`**；
-     4. 在右侧列表中找到名称为 **`sp_dc`** 的条目，双击复制其 **`Value`（值）**；
-     5. 回到 Lazer 客户端登录弹窗，点击底部的 **【使用 Cookie 登录】**，将复制的 `sp_dc` 粘贴进去确认即可秒级完成登录！
-   - **方式二（配合自动化助手）**：在终端运行 `node tools/get_cookie.js`，脚本获取凭据后将通过本地 Socket 实时通知 Lazer 客户端秒速完成登录并自动关闭弹窗。
+### 方案 B：浏览器开发者工具手动提取 Cookie (通用方案)
+如果您希望直接复用日常 Chrome / Edge 浏览器中已登录的 Spotify 账号：
+1. 在日常浏览器中打开并登录 [accounts.spotify.com](https://accounts.spotify.com)（或在 Lazer 登录弹窗中点击【在浏览器中打开授权页】）；
+2. 登录成功后，按键盘 **`F12`** 键（或右键选择“检查”）打开开发者工具（DevTools）；
+3. 切换到顶部的 **`Application`（应用）** 标签页；
+4. 在左侧菜单栏展开 **`Storage`（存储）** ➔ **`Cookies`** ➔ 点击 **`https://accounts.spotify.com`**；
+5. 在右侧列表中找到名称为 **`sp_dc`** 的条目，双击复制其 **`Value`（值）**；
+6. 回到 Lazer 客户端 Spotube 登录弹窗，点击底部的 **【使用 Cookie 登录】**，将复制的 `sp_dc` 粘贴进去确认即可秒级完成登录！
 
 ![Chrome 获取 sp_dc Cookie 教程截图](docs/images/tutorial/chrome_sp_dc.png)
 
