@@ -1,7 +1,7 @@
 # 🎵 Lazer Spotube Plugin (Spotify 曲库插件)
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg?style=flat-square)](LICENSE)
-[![Version: 0.1.0](https://img.shields.io/badge/Version-0.1.0-brightgreen.svg?style=flat-square)](manifest.json)
+[![Version: 0.1.2](https://img.shields.io/badge/Version-0.1.2-brightgreen.svg?style=flat-square)](manifest.json)
 [![Lazer: 2.0.210+](https://img.shields.io/badge/Lazer-2.0.210+-orange.svg?style=flat-square)](https://github.com/chuxuehaocai/Lazer)
 
 专为 [**Lazer**](https://github.com/chuxuehaocai/Lazer) 现代跨平台音乐播放器打造的 **Spotube (Spotify) 混合架构扩展插件**。
@@ -22,10 +22,21 @@
 - **Spotube 原生置信度智能转接（Confidence Matcher）**：
   - 核心算法严格对齐 [team-spotube/spotube](https://github.com/team-spotube/spotube) 官方实现。
   - 结合**核心标题归一化、艺人交叉比对、$\le 10s$ 录音室原版时长容差**以及 **YouTube 官方 "- Topic" 纯音频频道优先** 规则进行多重加权打分，精准消除 MV 杂音与翻唱干扰。
+- **「我喜欢」云端红心曲库实时同步（Liked Songs）**：
+  - 基于 Spotify Pathfinder GraphQL 内部协议，完美支持直接同步个人 Spotify 账号中的全部云端已赞歌曲。
+  - 自动渲染高清封面、艺人信息与时长，支持云端双向红心收藏同步。
 - **免 DRM 高保真直链流（Anti-Throttling Stream）**：
   - 智能调度未加密的 128kbps AAC / Opus 裸音频流，无需复杂的 Widevine 解密模块，保持插件仅 **数十 KB** 的极简轻量包体。
 - **精准毫秒级同步歌词**：
   - 深度对接公开免鉴权同步歌词源（LRCLib），毫秒级逐行滚动，完美呈现 Lazer 流光高亮背景。
+
+---
+
+## 📸 运行效果截图 (Screenshots)
+
+| 云端已赞歌曲同步 (我喜欢) | 主页与精选歌单 |
+| :---: | :---: |
+| ![Liked Songs](docs/images/like.png) | ![Homepage](docs/images/homepage.png) |
 
 ---
 
