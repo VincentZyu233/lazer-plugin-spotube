@@ -164,9 +164,9 @@ node tools/build.js
 
 ## 💖 鸣谢与致敬
 
-- [chuxuehaocai/Lazer](https://github.com/chuxuehaocai/Lazer) - 优雅而纯粹的手工打造跨平台音乐播放器。
+- [chuxuehaocai/Lazer](https://github.com/chuxuehaocai/Lazer) - 优雅而纯粹的手工打造跨平台音乐播放器（AGPL-3.0），为本项目提供了核心扩展宿主与运行时环境。
 - [team-spotube/spotube](https://github.com/team-spotube/spotube) - 卓越的开源跨平台 Spotify 客户端（AGPL-3.0），为本插件的置信度匹配算法（Confidence Matcher）与双轨架构设计提供了核心灵感。
-- [LRCLIB](https://lrclib.net) - 纯净、免鉴权的开放同步歌词数据库（MIT）。
+- [LRCLIB](https://lrclib.net) - 纯净、免鉴权的开放同步歌词数据库（MIT），为本项目提供了毫秒级滚动歌词源支撑。
 
 ---
 
