@@ -69,7 +69,7 @@ function collectFiles(dir, base = '') {
         entry.name.endsWith('.txt') ||
         entry.name.endsWith('.json');
 
-      if (isAllowed && (entry.name === 'manifest.json' || entry.name === 'main.lua' || entry.name === 'README.md' || entry.name === 'LICENSE' || base.startsWith('spotube'))) {
+      if (isAllowed && (entry.name === 'manifest.json' || entry.name === 'main.lua' || entry.name === 'README.md' || entry.name === 'CHANGELOG.md' || entry.name === 'LICENSE' || base.startsWith('spotube'))) {
         filesToPack.push({ fullPath, relPath });
       }
     }

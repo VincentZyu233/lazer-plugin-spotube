@@ -1,7 +1,7 @@
 # 🎵 Lazer Spotube Music Plugin (Spotify 曲库插件)
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg?style=flat-square)](LICENSE)
-[![Version: 0.1.2](https://img.shields.io/badge/Version-0.1.2-brightgreen.svg?style=flat-square)](manifest.json)
+[![Version: 0.1.4](https://img.shields.io/badge/Version-0.1.4-brightgreen.svg?style=flat-square)](manifest.json)
 [![Lazer: 2.0.210+](https://img.shields.io/badge/Lazer-2.0.210+-orange.svg?style=flat-square)](https://github.com/chuxuehaocai/Lazer)
 
 专为 [**Lazer**](https://github.com/chuxuehaocai/Lazer) 现代跨平台音乐播放器打造的 **Spotube (Spotify) 官方/第三方 Lua Gateway 扩展插件**。
@@ -38,27 +38,27 @@
 
 ### 📻 1. 主页发现与官方榜单 (Home Feed & Charts)
 深度整合 Spotify 官方全球热门榜单（Global, USA, Japan Top 50）与猜你喜欢、编辑精选展架，卡片流光溢彩，常驻主页中心。
-![主页发现与官方榜单](docs/images/homepage.png)
+![主页发现与官方榜单](docs/images/preview/homepage.png)
 
 ### ❤️ 2. 红心收藏与我喜欢的音乐 (Favorites / Liked Songs)
 基于 Spotify Pathfinder GraphQL 内部协议，完美无感双向同步个人 Spotify 账号云端“我喜欢”红心曲库，自动渲染高清封面、艺人信息与时长。
-![红心收藏与我喜欢的音乐](docs/images/like.png)
+![红心收藏与我喜欢的音乐](docs/images/preview/like.png)
 
 ### 🔍 3. 单曲全域搜索 (Song Search)
 多维度检索官方单曲与高精准匹配，毫秒级呈现音轨元数据与高清封面。
-![单曲搜索](docs/images/search.song.iyowa.png)
+![单曲搜索](docs/images/preview/search.song.iyowa.png)
 
 ### 💿 4. 专辑搜索与全盘试听 (Album Search)
 支持独立专辑 Tab 检索，呈现完整的唱片发行信息与官方音轨列表，支持一键载入全盘试听。
-![专辑搜索](docs/images/search.album.minecraft.png)
+![专辑搜索](docs/images/preview/search.album.minecraft.png)
 
 ### 📑 5. 歌单搜索与直接秒开 (Playlist Search)
 检索丰富的公共精选歌单与分类特辑，支持直接在搜索框粘贴公开 Spotify 歌单链接（`open.spotify.com/playlist/...`）秒开整张歌单。
-![歌单搜索](docs/images/search.songlist.jaychou.png)
+![歌单搜索](docs/images/preview/search.songlist.jaychou.png)
 
 ### 🎤 6. 纯净毫秒级流光同步歌词 (Timed Lyrics)
 深度对接 LRCLIB 免鉴权同步歌词源，毫秒级逐行滚动，完美呈现 Lazer 流光高亮背景。
-![同步歌词](docs/images/lyrics.lrclib.iyowa.peachykey.png)
+![同步歌词](docs/images/preview/lyrics.lrclib.iyowa.peachykey.png)
 
 ---
 
@@ -107,20 +107,31 @@ flowchart LR
 
 ## 🔐 登录体验与配套工具 (Authentication)
 
-Spotify 采用严格的 HttpOnly Cookie (`sp_dc`) 进行 Web 播放鉴权。本插件提供两种极简的登录体验：
+Spotify 采用严格的 HttpOnly Cookie (`sp_dc`) 进行 Web 播放鉴权。本插件提供三种便捷的登录体验：
 
-### 方案 A：Lazer 客户端原生浏览器授权联动
-1. 在 Lazer 左侧进入 **登录** → 音乐平台选择 **Spotube**；
-2. 弹窗内会展示登录二维码以及【在浏览器中打开授权页】按钮；
-3. 点击按钮在浏览器中登录 Spotify；配合 `tools/get_cookie.js` 助手，插件会在检测到凭据后自动完成登录交接并关闭弹窗！
-
-### 方案 B：一键助手自动注入 (默认推荐)
+### 方案 A：一键助手自动注入 (最省心，默认推荐)
 1. 进入插件目录下的 `tools/` 文件夹；
 2. 在终端或控制台直接运行：
    ```bash
    node tools/get_cookie.js
    ```
-3. 脚本会自动拉起独立的浏览器窗口引导登录；登录成功后，脚本会自动提取 `sp_dc`、解析用户身份、注入到 Lazer 插件存储，并通知 Lazer 客户端自动完成登录！
+3. 脚本会自动拉起独立的浏览器窗口引导登录；登录成功后，脚本会自动提取 `sp_dc`、解析用户身份、注入到 Lazer 插件存储，并通知 Lazer 客户端自动完成登录并关闭弹窗！
+
+### 方案 B：Lazer 客户端原生浏览器授权联动
+1. 在 Lazer 左侧进入 **登录** → 音乐平台选择 **Spotube**；
+2. 弹窗内会展示登录二维码以及【在浏览器中打开授权页】按钮；
+3. 点击按钮在浏览器中登录 Spotify；配合 `tools/get_cookie.js` 助手，插件会在检测到凭据后自动完成登录交接并关闭弹窗！
+
+### 方案 C：浏览器开发者工具手动提取 Cookie (通用方案)
+如果您希望直接复用现有 Chrome / Edge 浏览器中已登录的 Spotify 账号：
+1. 在 Chrome 或 Edge 浏览器中打开并登录 [accounts.spotify.com](https://accounts.spotify.com)；
+2. 按键盘 **`F12`** 键（或右键页面选择“检查”）打开开发者工具（DevTools）；
+3. 切换到顶部的 **`Application`（应用）** 标签页；
+4. 在左侧菜单栏展开 **`Storage`（存储）** ➔ **`Cookies`** ➔ 点击 **`https://accounts.spotify.com`**；
+5. 在右侧列表中找到名称为 **`sp_dc`** 的条目，双击复制其 **`Value`（值）**；
+6. 回到 Lazer 客户端登录弹窗，点击底部的 **【使用 Cookie 登录】**，将复制的 `sp_dc` 粘贴进去确认即可秒级完成登录！
+
+![Chrome 获取 sp_dc Cookie 教程截图](docs/images/tutorial/chrome_sp_dc.png)
 
 ---
 

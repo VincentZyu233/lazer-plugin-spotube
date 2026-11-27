@@ -99,6 +99,11 @@ function store.set(key, val)
   end
 end
 
+function store.clear_cache()
+  store._cache = {}
+  store._track_meta = {}
+end
+
 function store.get_matched_stream(track_id)
   if not track_id then return nil end
   return store.get("match:" .. tostring(track_id))

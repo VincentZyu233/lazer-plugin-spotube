@@ -5,7 +5,7 @@ local auth = {}
 --- 获取当前登录会话
 function auth.session(spotify)
   local sp_dc = store.get_fresh("sp_dc")
-  if not sp_dc or sp_dc == "" then
+  if not sp_dc or sp_dc == "" or string.len(tostring(sp_dc)) < 10 then
     return nil
   end
 
@@ -17,18 +17,12 @@ function auth.session(spotify)
   if spotify and type(spotify.get_me) == "function" then
     local ok, me = pcall(spotify.get_me)
     if ok and me and me.id then
+      store.set("sp_user", me)
       return me
     end
   end
 
-  local fallback_user = {
-    id = "VincentZyu",
-    name = "VincentZyu",
-    avatarUrl = "https://i.scdn.co/image/ab67757000003b82630598608b32209b2217cb78",
-    vip = false
-  }
-  store.set("sp_user", fallback_user)
-  return fallback_user
+  return nil
 end
 
 --- 按字节边界裁剪首尾空白 (兼容 Dart lua_dardo_plus 沙箱)
@@ -102,22 +96,41 @@ function auth.login_cookie(cookie_str, spotify)
     end
   end
 
-  local fallback_user = {
-    id = "VincentZyu",
-    name = "VincentZyu",
-    avatarUrl = "https://i.scdn.co/image/ab67757000003b82630598608b32209b2217cb78",
+  local default_user = {
+    id = "spotify_user",
+    name = "Spotify 用户",
+    avatarUrl = "",
     vip = false
   }
-  store.set("sp_user", fallback_user)
-  return fallback_user
+  store.set("sp_user", default_user)
+  return default_user
 end
 
 --- 退出登录
 function auth.logout()
+  -- 彻底清空凭据与持久化存储
   store.set("sp_dc", nil)
   store.set("sp_access_token", nil)
   store.set("sp_token_exp", nil)
   store.set("sp_user", nil)
+  if type(store.clear_cache) == "function" then
+    store.clear_cache()
+  end
+
+  -- 重置待确认的授权会话
+  pending_sessions = {}
+
+  -- 关闭本地 TCP 监听
+  if server_listening and host and type(host.socket_server) == "function" then
+    pcall(function()
+      host.socket_server({
+        id = SOCKET_SERVER_ID,
+        operation = "close"
+      })
+    end)
+    server_listening = false
+  end
+
   return true
 end
 
