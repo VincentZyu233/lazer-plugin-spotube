@@ -3,6 +3,28 @@ local http = require("spotube.core.http")
 
 local lyrics_service = {}
 
+-- 边界完全安全的 substring，防止 lua_dardo_plus 在 start > len 时向 Dart 传递越界索引导致 RangeError
+local raw_string_sub = string.sub
+local function safe_sub(s, i, j)
+  if not s then return "" end
+  local len = string.len(s)
+  if len == 0 then return "" end
+
+  if i < 0 then i = len + i + 1 end
+  if j and j < 0 then j = len + j + 1 end
+
+  if i < 1 then i = 1 end
+  if i > len then return "" end
+  if j and j < i then return "" end
+  if j and j > len then j = len end
+
+  if j then
+    return raw_string_sub(s, i, j)
+  else
+    return raw_string_sub(s, i)
+  end
+end
+
 local function url_encode(str)
   if not str or str == "" then return "" end
   if _url_encode then
@@ -33,20 +55,20 @@ local function get_primary_artist(artist_str)
   for _, sep in ipairs({",", ";", "/", "&", "、"}) do
     local p = string.find(s, sep, 1, true)
     if p then
-      s = string.sub(s, 1, p - 1)
+      s = safe_sub(s, 1, p - 1)
     end
   end
   for _, term in ipairs({" feat", " ft", " Feat", " Ft"}) do
     local p = string.find(s, term, 1, true)
     if p then
-      s = string.sub(s, 1, p - 1)
+      s = safe_sub(s, 1, p - 1)
     end
   end
   local fb = 1
   local lb = string.len(s)
   while fb <= lb and string.byte(s, fb) <= 32 do fb = fb + 1 end
   while lb >= fb and string.byte(s, lb) <= 32 do lb = lb - 1 end
-  return (fb <= lb) and string.sub(s, fb, lb) or s
+  return (fb <= lb) and safe_sub(s, fb, lb) or s
 end
 
 -- 清洗歌曲标题（纯子串查找与截断，完全杜绝 Dart RegExp 解析错误）
@@ -59,9 +81,9 @@ local function get_clean_title(title_str)
   if b1 then
     local b2 = string.find(s, "]", b1 + 1, true)
     if b2 then
-      local inside = string.lower(string.sub(s, b1 + 1, b2 - 1))
+      local inside = string.lower(safe_sub(s, b1 + 1, b2 - 1))
       if string.find(inside, "feat", 1, true) or string.find(inside, "ft", 1, true) or string.find(inside, "remaster", 1, true) then
-        s = string.sub(s, 1, b1 - 1) .. string.sub(s, b2 + 1)
+        s = safe_sub(s, 1, b1 - 1) .. safe_sub(s, b2 + 1)
       end
     end
   end
@@ -71,9 +93,9 @@ local function get_clean_title(title_str)
   if p1 then
     local p2 = string.find(s, ")", p1 + 1, true)
     if p2 then
-      local inside = string.lower(string.sub(s, p1 + 1, p2 - 1))
+      local inside = string.lower(safe_sub(s, p1 + 1, p2 - 1))
       if string.find(inside, "feat", 1, true) or string.find(inside, "ft", 1, true) or string.find(inside, "remaster", 1, true) then
-        s = string.sub(s, 1, p1 - 1) .. string.sub(s, p2 + 1)
+        s = safe_sub(s, 1, p1 - 1) .. safe_sub(s, p2 + 1)
       end
     end
   end
@@ -81,9 +103,9 @@ local function get_clean_title(title_str)
   -- 剥离 - Remastered... 或 - feat...
   local dash = string.find(s, " - ", 1, true)
   if dash then
-    local after = string.lower(string.sub(s, dash + 3))
+    local after = string.lower(safe_sub(s, dash + 3))
     if string.find(after, "remaster", 1, true) or string.find(after, "feat", 1, true) then
-      s = string.sub(s, 1, dash - 1)
+      s = safe_sub(s, 1, dash - 1)
     end
   end
 
@@ -92,64 +114,75 @@ local function get_clean_title(title_str)
   local lb = string.len(s)
   while fb <= lb and string.byte(s, fb) <= 32 do fb = fb + 1 end
   while lb >= fb and string.byte(s, lb) <= 32 do lb = lb - 1 end
-  return (fb <= lb) and string.sub(s, fb, lb) or s
+  return (fb <= lb) and safe_sub(s, fb, lb) or s
 end
 
 -- 解析标准 LRC 文本为带有高精度时间轴的行 (对齐 Lazer MusicLyricLine 要求: text 与 startMs)
 local function parse_lrc(raw_lrc)
   if not raw_lrc or raw_lrc == "" then return {} end
-  local lines = {}
+  local ok, res = pcall(function()
+    local lines = {}
 
-  for line in string.gmatch(raw_lrc, "[^\r\n]+") do
-    if string.sub(line, 1, 1) == "[" then
-      local rightBracket = string.find(line, "]", 2, true)
-      if rightBracket then
-        local timePart = string.sub(line, 2, rightBracket - 1)
-        local colonPos = string.find(timePart, ":", 1, true)
-        if colonPos then
-          local minStr = string.sub(timePart, 1, colonPos - 1)
-          local min = tonumber(minStr)
-          if min then
-            local rest = string.sub(timePart, colonPos + 1)
-            local dotPos = string.find(rest, ".", 1, true) or string.find(rest, ":", 1, true)
-            local sec, ms = 0, 0
-            if dotPos then
-              sec = tonumber(string.sub(rest, 1, dotPos - 1)) or 0
-              local msStr = string.sub(rest, dotPos + 1)
-              local msVal = tonumber(msStr) or 0
-              local msLen = string.len(msStr)
-              if msLen == 2 then
-                msVal = msVal * 10
-              elseif msLen == 1 then
-                msVal = msVal * 100
+    for line in string.gmatch(raw_lrc, "[^\r\n]+") do
+      local line_len = string.len(line)
+      if line_len >= 3 and safe_sub(line, 1, 1) == "[" then
+        local rightBracket = string.find(line, "]", 2, true)
+        if rightBracket and rightBracket > 2 then
+          local timePart = safe_sub(line, 2, rightBracket - 1)
+          local colonPos = string.find(timePart, ":", 1, true)
+          if colonPos and colonPos > 1 then
+            local minStr = safe_sub(timePart, 1, colonPos - 1)
+            local min = tonumber(minStr)
+            if min then
+              local rest = safe_sub(timePart, colonPos + 1)
+              local dotPos = string.find(rest, ".", 1, true) or string.find(rest, ":", 1, true)
+              local sec, ms = 0, 0
+              if dotPos then
+                sec = tonumber(safe_sub(rest, 1, dotPos - 1)) or 0
+                local msStr = safe_sub(rest, dotPos + 1)
+                local msVal = tonumber(msStr) or 0
+                local msLen = string.len(msStr)
+                if msLen == 2 then
+                  msVal = msVal * 10
+                elseif msLen == 1 then
+                  msVal = msVal * 100
+                end
+                ms = msVal
+              else
+                sec = tonumber(rest) or 0
               end
-              ms = msVal
-            else
-              sec = tonumber(rest) or 0
+              local startMs = min * 60000 + sec * 1000 + ms
+              local cleanText = ""
+              if rightBracket < line_len then
+                local text = safe_sub(line, rightBracket + 1)
+                local firstNonSpace = 1
+                local lastNonSpace = string.len(text)
+                while firstNonSpace <= lastNonSpace and string.byte(text, firstNonSpace) <= 32 do
+                  firstNonSpace = firstNonSpace + 1
+                end
+                while lastNonSpace >= firstNonSpace and string.byte(text, lastNonSpace) <= 32 do
+                  lastNonSpace = lastNonSpace - 1
+                end
+                if lastNonSpace >= firstNonSpace then
+                  cleanText = safe_sub(text, firstNonSpace, lastNonSpace)
+                end
+              end
+              table.insert(lines, {
+                text = cleanText,
+                startMs = startMs,
+                time = startMs
+              })
             end
-            local startMs = min * 60000 + sec * 1000 + ms
-            local text = string.sub(line, rightBracket + 1)
-            local firstNonSpace = 1
-            local lastNonSpace = string.len(text)
-            while firstNonSpace <= lastNonSpace and string.byte(text, firstNonSpace) <= 32 do
-              firstNonSpace = firstNonSpace + 1
-            end
-            while lastNonSpace >= firstNonSpace and string.byte(text, lastNonSpace) <= 32 do
-              lastNonSpace = lastNonSpace - 1
-            end
-            local cleanText = (lastNonSpace >= firstNonSpace) and string.sub(text, firstNonSpace, lastNonSpace) or ""
-            table.insert(lines, {
-              text = cleanText,
-              startMs = startMs,
-              time = startMs
-            })
           end
         end
       end
     end
-  end
 
-  return lines
+    return lines
+  end)
+
+  if ok and res then return res end
+  return {}
 end
 
 --- 从 LRCLib 抓取高精度同步歌词 (100% 对齐 Spotube 官方内置 RealLRCLibLyricsAPI 实现)
@@ -314,7 +347,7 @@ function lyrics_service.get_lyrics(title, artist, album, duration_s, log_step)
       while fb <= lb and string.byte(line, fb) <= 32 do fb = fb + 1 end
       while lb >= fb and string.byte(line, lb) <= 32 do lb = lb - 1 end
       if lb >= fb then
-        table.insert(plain_lines, string.sub(line, fb, lb))
+        table.insert(plain_lines, safe_sub(line, fb, lb))
       end
     end
 
