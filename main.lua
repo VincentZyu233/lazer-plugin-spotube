@@ -131,7 +131,8 @@ function plugin.call(operation, args)
     return {
       {
         synced = (res.synced == true or res.hasSynced == true),
-        lines = res.lines
+        lines = res.lines,
+        lrc = res.raw_lrc
       }
     }
   elseif operation == "player_event" then

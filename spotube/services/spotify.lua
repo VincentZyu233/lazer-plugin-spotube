@@ -592,7 +592,8 @@ function spotify_service.get_playlist(playlist_id)
       if content and content.items then
         for _, it in ipairs(content.items) do
           local tr = it.itemV2 and it.itemV2.data
-          if tr and tr.id then
+          local tr_id = tr and (tr.id or spotify_service.clean_id(tr.uri))
+          if tr and tr_id and tr_id ~= "" then
             local artist_names = {}
             local song_artists = {}
 
@@ -621,12 +622,12 @@ function spotify_service.get_playlist(playlist_id)
               tr_cover = (srcs[#srcs] and srcs[#srcs].url) or (srcs[1] and srcs[1].url)
             end
 
-            local dur_ms = (tr.duration and tr.duration.totalMilliseconds) or (tr.duration_ms or 0)
+            local dur_ms = (tr.trackDuration and tr.trackDuration.totalMilliseconds) or (tr.duration and tr.duration.totalMilliseconds) or (tr.duration_ms or 0)
             local album_name = (tr.albumOfTrack and tr.albumOfTrack.name) or ""
-            local album_id = (tr.albumOfTrack and tr.albumOfTrack.id) or ""
+            local album_id = (tr.albumOfTrack and (tr.albumOfTrack.id or spotify_service.clean_id(tr.albumOfTrack.uri))) or ""
 
             local song_obj = {
-              id = tr.id,
+              id = tr_id,
               name = tr.name,
               title = tr.name,
               artists = song_artists,
@@ -640,7 +641,7 @@ function spotify_service.get_playlist(playlist_id)
               durationMs = dur_ms,
               provider = "spotube"
             }
-            store.save_track_meta(tr.id, song_obj)
+            store.save_track_meta(tr_id, song_obj)
             table.insert(songs, song_obj)
           end
         end

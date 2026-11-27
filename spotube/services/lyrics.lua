@@ -97,19 +97,21 @@ function lyrics_service.get_lyrics(title, artist, album, duration_s)
   local url = constants.HOST_LRCLIB .. "/api/get?" .. query_params
   local res = http.get(url, headers)
 
-  -- 2. 第二阶：若精确匹配未命中或 404，通过 /api/search 进行模糊兜底匹配 (Spotube 官方机制)
-  if not res or type(res) ~= "table" or (not res.syncedLyrics and not res.plainLyrics) then
+  -- 2. 第二阶：若精确匹配未命中或缺少同步时间轴，通过 /api/search 进行模糊兜底，优先获取同步歌词 (Spotube 官方机制)
+  if not res or type(res) ~= "table" or not res.syncedLyrics or string.len(tostring(res.syncedLyrics)) == 0 then
     local search_q = url_encode(title .. (artist and (" " .. artist) or ""))
     local search_url = constants.HOST_LRCLIB .. "/api/search?q=" .. search_q
     local s_res = http.get(search_url, headers)
     if s_res and type(s_res) == "table" and #s_res > 0 then
+      local found_synced = false
       for _, it in ipairs(s_res) do
-        if it.syncedLyrics and string.len(it.syncedLyrics) > 0 then
+        if it.syncedLyrics and string.len(tostring(it.syncedLyrics)) > 0 then
           res = it
+          found_synced = true
           break
         end
       end
-      if not res or not res.syncedLyrics then
+      if not found_synced and (not res or not res.plainLyrics) then
         res = s_res[1]
       end
     end
@@ -145,6 +147,7 @@ function lyrics_service.get_lyrics(title, artist, album, duration_s)
 
   return {
     lines = lines,
+    raw_lrc = raw_lrc,
     source = "lrclib",
     synced = (res.syncedLyrics ~= nil and #lines > 0),
     hasSynced = (res.syncedLyrics ~= nil and #lines > 0)
