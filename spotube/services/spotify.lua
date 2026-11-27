@@ -1375,7 +1375,7 @@ function spotify_service.ensure_client_token(force_refresh)
   end
 
   local client_id = store.get("sp_client_id") or "d8a5ed958d274c2e8ee717e6a4b0971d"
-  local client_version = "1.3.13.98.g35b7f62dc103"
+  local client_version = "1.3.13.71.gd0a59bb536f8"
 
   local payload = {
     client_data = {
@@ -1437,7 +1437,7 @@ function spotify_service.pathfinder_query(operation_name, hash, variables)
     ["Content-Type"] = "application/json;charset=UTF-8",
     ["Authorization"] = "Bearer " .. tostring(access_token),
     ["app-platform"] = "WebPlayer",
-    ["spotify-app-version"] = "1.3.13.98.g35b7f62dc103"
+    ["spotify-app-version"] = "1.3.13.71.gd0a59bb536f8"
   }
   if client_token and string.len(tostring(client_token)) > 0 then
     headers["client-token"] = tostring(client_token)
