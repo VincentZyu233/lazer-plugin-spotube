@@ -1584,17 +1584,10 @@ function spotify_service.get_user_playlists(limit, offset)
   -- 1. 优先通过 Pathfinder libraryV3 协议拉取（支持自建歌单如 test、收藏歌单与四宫格封面）
   if sp_dc and string.len(sp_dc) > 5 then
     local lib_hash = "390c78e5b951029bad359785e69b07b536a509c581cbcd0aded5e5067f187455"
+    -- 注意：filters/features 等字段绝不能传空 table {}，否则 Dart jsonEncode 会将其编码为 JSON 对象 {} 而非数组 []，导致 Pathfinder 报 400 Bad Request
     local res, err = spotify_service.pathfinder_query("libraryV3", lib_hash, {
       limit = limit,
-      offset = offset,
-      filters = {},
-      order = nil,
-      textFilter = "",
-      features = {},
-      folderUri = nil,
-      flatten = false,
-      expandedFolders = {},
-      includeFoldersWhenFlattening = true
+      offset = offset
     })
 
     if res and type(res) == "table" and res.data and res.data.me and res.data.me.libraryV3 and res.data.me.libraryV3.items then
@@ -1628,8 +1621,11 @@ function spotify_service.get_user_playlists(limit, offset)
             title = name,
             name = name,
             coverUrl = cover,
+            cover = cover,
             owner = owner_name,
             writable = is_writable,
+            isFavorites = false,
+            songCount = 0,
             description = p_data.description or "",
             provider = "spotube"
           })
@@ -1847,10 +1843,13 @@ function spotify_service.get_artist_top_tracks(artist_id, offset)
       local tr = it.track or {}
       local raw_id = tr.id or (tr._uri and spotify_service.clean_id(tr._uri))
       if raw_id then
-        local alb = tr.album or {}
+        local alb = tr.albumOfTrack or tr.album or {}
         local cover = nil
         if alb.coverArt and alb.coverArt.sources and #alb.coverArt.sources > 0 then
-          cover = alb.coverArt.sources[1].url
+          local srcs = alb.coverArt.sources
+          cover = (srcs[#srcs] and srcs[#srcs].url) or (srcs[1] and srcs[1].url)
+        elseif alb.images and #alb.images > 0 then
+          cover = alb.images[1].url
         end
         local arts = {}
         local art_names = {}
@@ -1876,12 +1875,13 @@ function spotify_service.get_artist_top_tracks(artist_id, offset)
           name = tostring(tr.name or "未知单曲"),
           artist = table.concat(art_names, "/"),
           artists = arts,
-          album = tostring(alb.name or "热门单曲"),
-          albumName = tostring(alb.name or "热门单曲"),
+          album = tostring(alb.name or tr.name or "热门单曲"),
+          albumName = tostring(alb.name or tr.name or "热门单曲"),
           albumId = tostring(alb_id),
           duration = math.floor(duration_ms / 1000),
           durationMs = duration_ms,
           coverUrl = cover or detected_avatar or "",
+          cover = cover or detected_avatar or "",
           provider = "spotube"
         }
         store.save_track_meta(song_obj.id, song_obj)
