@@ -73,20 +73,20 @@ flowchart LR
         Cards["官方榜单 / 推荐歌单广场"]
         Favorites["我喜欢的音乐 (Liked Songs)"]
         Player["原生播放引擎"]
-        AuthModal["原生登录弹窗<br/>(扫码/浏览器授权/Cookie)"]
+        AuthModal["原生登录弹窗 (扫码/浏览器授权/Cookie)"]
     end
 
     subgraph SpotubePlugin["lazer-plugin-spotube 核心层"]
-        Meta["Spotify 官方端点<br/>(sp_dc 登录态 / TOTP 动态签名)"]
-        Pathfinder["Pathfinder GraphQL<br/>(fetchLibraryTracks 云端收藏)"]
-        Matcher["Spotube 置信度打分算法<br/>(时长容差 + 官方 Topic 频道加权)"]
-        Streamer["InnerTube 直链流调度器<br/>(免 DRM 裸流提取)"]
+        Meta["Spotify 官方端点 (sp_dc 登录态 / TOTP 动态签名)"]
+        Pathfinder["Pathfinder GraphQL (fetchLibraryTracks 云端收藏)"]
+        Matcher["Spotube 置信度打分算法 (时长容差 + 官方 Topic 频道加权)"]
+        Streamer["InnerTube 直链流调度器 (免 DRM 裸流提取)"]
         Lyrics["LRCLib 逐行同步歌词"]
-        AuthServer["本地 Socket 服务<br/>(127.0.0.1:28795 登录态握手)"]
+        AuthServer["本地 Socket 服务 (127.0.0.1:28795 登录态握手)"]
     end
 
     subgraph Tools["配套桌面工具"]
-        GetCookie["tools/get_cookie.js<br/>CDP 浏览器凭据自动监听"]
+        GetCookie["tools/get_cookie.js (CDP 浏览器凭据自动监听)"]
     end
 
     Search --> Meta
@@ -95,12 +95,12 @@ flowchart LR
     Meta --> UI
     Pathfinder --> UI
 
-    Player -->|resolve(song)| Matcher
+    Player -->|"resolve(song) 音轨转接"| Matcher
     Matcher --> Streamer
-    Streamer -->|128k AAC/Opus 裸流| Player
+    Streamer -->|"128k AAC/Opus 裸流"| Player
 
-    AuthModal <-->|本地 Socket 握手| AuthServer
-    GetCookie -->|CDP 监听捕获| AuthServer
+    AuthModal <-->|"本地 Socket 握手"| AuthServer
+    GetCookie -->|"CDP 监听捕获"| AuthServer
 ```
 
 ---
