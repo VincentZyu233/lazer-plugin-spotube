@@ -13,34 +13,86 @@ local function url_encode(str)
     local ok, res = pcall(host.url_encode, str)
     if ok and res then return res end
   end
-  local s = string.gsub(str, "([^%w%-_%.~])", function(c)
-    return string.format("%%%02X", string.byte(c))
-  end)
-  return s
+  -- 纯安全字符表逐字节编码，不依赖 Dart RegExp 翻译
+  local buf = {}
+  for i = 1, string.len(str) do
+    local b = string.byte(str, i)
+    if (b >= 48 and b <= 57) or (b >= 65 and b <= 90) or (b >= 97 and b <= 122) or b == 45 or b == 46 or b == 95 or b == 126 then
+      table.insert(buf, string.char(b))
+    else
+      table.insert(buf, string.format("%%%02X", b))
+    end
+  end
+  return table.concat(buf, "")
 end
 
--- 提取首要歌手（剥离多歌手拼接、feat、ft 等，对齐 Spotube 检索规范）
+-- 提取首要歌手（纯子串查找与截断，完全杜绝 Dart RegExp 解析错误）
 local function get_primary_artist(artist_str)
   if not artist_str or artist_str == "" then return "" end
-  local first = string.match(artist_str, "^([^,;/&、]+)")
-  if not first then first = artist_str end
-  first = string.gsub(first, "%s*[fF]eat%..*$", "")
-  first = string.gsub(first, "%s*[fF]t%..*$", "")
-  first = string.match(first, "^%s*(.-)%s*$") or first
-  return first
+  local s = tostring(artist_str)
+  for _, sep in ipairs({",", ";", "/", "&", "、"}) do
+    local p = string.find(s, sep, 1, true)
+    if p then
+      s = string.sub(s, 1, p - 1)
+    end
+  end
+  for _, term in ipairs({" feat", " ft", " Feat", " Ft"}) do
+    local p = string.find(s, term, 1, true)
+    if p then
+      s = string.sub(s, 1, p - 1)
+    end
+  end
+  local fb = 1
+  local lb = string.len(s)
+  while fb <= lb and string.byte(s, fb) <= 32 do fb = fb + 1 end
+  while lb >= fb and string.byte(s, lb) <= 32 do lb = lb - 1 end
+  return (fb <= lb) and string.sub(s, fb, lb) or s
 end
 
--- 清洗歌曲标题（剥离 (feat. ...), [feat. ...], - Remastered 等副标题）
+-- 清洗歌曲标题（纯子串查找与截断，完全杜绝 Dart RegExp 解析错误）
 local function get_clean_title(title_str)
   if not title_str or title_str == "" then return "" end
-  local s = string.gsub(title_str, "%s*%(feat%..-%)$", "")
-  s = string.gsub(s, "%s*%[feat%..-%]$", "")
-  s = string.gsub(s, "%s*%(ft%..-%)$", "")
-  s = string.gsub(s, "%s*%[ft%..-%]$", "")
-  s = string.gsub(s, "%s*%-.*[rR]emaster.*$", "")
-  s = string.gsub(s, "%s*%(.*[rR]emaster.*%)$", "")
-  s = string.match(s, "^%s*(.-)%s*$") or s
-  return s
+  local s = tostring(title_str)
+
+  -- 剥离 [feat...], [ft...], [remaster...]
+  local b1 = string.find(s, "[", 1, true)
+  if b1 then
+    local b2 = string.find(s, "]", b1 + 1, true)
+    if b2 then
+      local inside = string.lower(string.sub(s, b1 + 1, b2 - 1))
+      if string.find(inside, "feat", 1, true) or string.find(inside, "ft", 1, true) or string.find(inside, "remaster", 1, true) then
+        s = string.sub(s, 1, b1 - 1) .. string.sub(s, b2 + 1)
+      end
+    end
+  end
+
+  -- 剥离 (feat...), (ft...), (remaster...)
+  local p1 = string.find(s, "(", 1, true)
+  if p1 then
+    local p2 = string.find(s, ")", p1 + 1, true)
+    if p2 then
+      local inside = string.lower(string.sub(s, p1 + 1, p2 - 1))
+      if string.find(inside, "feat", 1, true) or string.find(inside, "ft", 1, true) or string.find(inside, "remaster", 1, true) then
+        s = string.sub(s, 1, p1 - 1) .. string.sub(s, p2 + 1)
+      end
+    end
+  end
+
+  -- 剥离 - Remastered... 或 - feat...
+  local dash = string.find(s, " - ", 1, true)
+  if dash then
+    local after = string.lower(string.sub(s, dash + 3))
+    if string.find(after, "remaster", 1, true) or string.find(after, "feat", 1, true) then
+      s = string.sub(s, 1, dash - 1)
+    end
+  end
+
+  -- 首尾 trim
+  local fb = 1
+  local lb = string.len(s)
+  while fb <= lb and string.byte(s, fb) <= 32 do fb = fb + 1 end
+  while lb >= fb and string.byte(s, lb) <= 32 do lb = lb - 1 end
+  return (fb <= lb) and string.sub(s, fb, lb) or s
 end
 
 -- 解析标准 LRC 文本为带有高精度时间轴的行 (对齐 Lazer MusicLyricLine 要求: text 与 startMs)
