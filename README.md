@@ -142,9 +142,9 @@ Spotube 插件现已提交收录于 Lazer 官方插件市场：
 
 ### 📥 方法二：通过 ZIP 本地导入
 
-1. 前往本仓库的 [Releases](../../releases) 页面，下载最新的 `community.spotube.music.zip`。
+1. 前往本仓库的 [Releases](../../releases) 页面，下载最新的 `lazer.spotube.zip`。
 2. 打开 **Lazer** 播放器，进入 **设置 -> 插件管理**。
-3. 点击 **导入 ZIP 插件**，选择下载好的 `community.spotube.music.zip`。
+3. 点击 **导入 ZIP 插件**，选择下载好的 `lazer.spotube.zip`。
 4. 启用插件后，在播放器音源切换列表即可选择 **Spotube**！
 
 ---
@@ -154,19 +154,19 @@ Spotube 插件现已提交收录于 Lazer 官方插件市场：
 项目内置了 Node.js 一键校验与打包脚本：
 
 ```bash
-# 校验清单并打包为 dist/community.spotube.music.zip，同时输出 SHA-256 和 plugins.json 片段
+# 校验清单并打包为 dist/lazer.spotube.zip，同时输出 SHA-256 和 plugins.json 片段
 node tools/build.js
 ```
 
-产物将自动输出至 `dist/community.spotube.music.zip`，并生成对应的 SHA-256 哈希值。
+产物将自动输出至 `dist/lazer.spotube.zip`，并生成对应的 SHA-256 哈希值。
 
 ---
 
 ## 💖 鸣谢与致敬
 
 - [chuxuehaocai/Lazer](https://github.com/chuxuehaocai/Lazer) - 优雅而纯粹的手工打造跨平台音乐播放器。
-- [team-spotube/spotube](https://github.com/team-spotube/spotube) - 卓越的开源跨平台 Spotify 客户端，为本插件的置信度匹配算法（Confidence Matcher）与双轨架构设计提供了核心灵感。
-- [LRCLIB](https://lrclib.net) - 纯净、免鉴权的开放同步歌词数据库。
+- [team-spotube/spotube](https://github.com/team-spotube/spotube) - 卓越的开源跨平台 Spotify 客户端（AGPL-3.0），为本插件的置信度匹配算法（Confidence Matcher）与双轨架构设计提供了核心灵感。
+- [LRCLIB](https://lrclib.net) - 纯净、免鉴权的开放同步歌词数据库（MIT）。
 
 ---
 
