@@ -66,8 +66,24 @@ function plugin.call(operation, args)
     local feed = spotify.get_home_feed()
     return feed.playlists or {}
   elseif operation == "playlist" then
+    local p_id = type(args) == "table" and (args.id or args.playlistId or args.playlist_id) or tostring(args or "")
+    if p_id == "__lazer_favorites__" or string.find(p_id, "favorites", 1, true) then
+      return {
+        id = p_id,
+        name = "我喜欢",
+        title = "我喜欢",
+        isFavorites = true,
+        songCount = 0
+      }
+    end
     return spotify.get_playlist(args)
   elseif operation == "playlistSongs" then
+    local p_id = type(args) == "table" and (args.id or args.playlistId or args.playlist_id) or tostring(args or "")
+    if p_id == "__lazer_favorites__" or string.find(p_id, "favorites", 1, true) then
+      local limit = tonumber(type(args) == "table" and args.limit) or 50
+      local offset = tonumber(type(args) == "table" and args.offset) or 0
+      return spotify.get_library_tracks(limit, offset)
+    end
     local res = spotify.get_playlist(args)
     return (res and res.songs) or {}
   elseif operation == "album" then
@@ -94,13 +110,21 @@ function plugin.call(operation, args)
     local feed = spotify.get_home_feed()
     return feed.charts or {}
   elseif operation == "favorites" then
+    local store = require("spotube.core.store")
     local limit = 50
     local offset = 0
     if type(args) == "table" then
       limit = tonumber(args.limit) or 50
       offset = tonumber(args.offset) or 0
     end
-    return spotify.get_library_tracks(limit, offset)
+    store.set("debug_fav_invoke", { time = (host and host.now and host.now()) or 0, args = args })
+    local ok, res = pcall(spotify.get_library_tracks, limit, offset)
+    if not ok then
+      store.set("debug_fav_error", tostring(res))
+      return {}
+    end
+    store.set("debug_fav_result", { count = (res and #res) or 0 })
+    return res or {}
   elseif operation == "setFavorite" then
     local track_id = ""
     local is_favorite = false

@@ -1448,6 +1448,7 @@ end
 
 --- 获取用户云端已赞歌曲 (Pathfinder fetchLibraryTracks)
 function spotify_service.get_library_tracks(limit, offset)
+  local store = require("spotube.core.store")
   limit = tonumber(limit) or 50
   offset = tonumber(offset) or 0
   if limit > 100 then limit = 100 end
@@ -1456,6 +1457,7 @@ function spotify_service.get_library_tracks(limit, offset)
 
   local sp_dc = store.get("sp_dc")
   if not sp_dc or string.len(sp_dc) < 10 then
+    store.set("debug_lib_sp_dc", "missing")
     return {}
   end
 
@@ -1464,6 +1466,8 @@ function spotify_service.get_library_tracks(limit, offset)
     limit = limit,
     offset = offset
   })
+
+  store.set("debug_pathfinder_raw", { ok = (res ~= nil), err = err, has_data = (res and res.data ~= nil) })
 
   local songs = {}
   if res and type(res) == "table" and res.data and res.data.me and res.data.me.library and res.data.me.library.tracks and res.data.me.library.tracks.items then
