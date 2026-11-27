@@ -1431,6 +1431,7 @@ function spotify_service.pathfinder_query(operation_name, hash, variables)
     }
   }
 
+  local sp_dc = store.get("sp_dc")
   local headers = {
     ["User-Agent"] = constants.USER_AGENT_DESKTOP,
     ["Accept"] = "application/json",
@@ -1439,6 +1440,9 @@ function spotify_service.pathfinder_query(operation_name, hash, variables)
     ["app-platform"] = "WebPlayer",
     ["spotify-app-version"] = "1.3.13.71.gd0a59bb536f8"
   }
+  if sp_dc and string.len(tostring(sp_dc)) > 0 then
+    headers["Cookie"] = "sp_dc=" .. tostring(sp_dc)
+  end
   if client_token and string.len(tostring(client_token)) > 0 then
     headers["client-token"] = tostring(client_token)
   end
@@ -1692,8 +1696,9 @@ function spotify_service.get_user_playlists(limit, offset)
 end
 
 local artist_resolve_cache = {}
+local artist_overview_cache = {}
 
---- 智能解析艺人 ID (若传入的是纯名字如 "Porter Robinson"，则轻量搜索换取真实的 Spotify 艺人 ID，带本地缓存防死循环)
+--- 智能解析艺人 ID (若传入的是纯名字如 "Porter Robinson"，则轻量搜索换取真实的 Spotify 22 位 ID，带内存缓存)
 function spotify_service.resolve_artist(artist_id_or_name)
   local raw = tostring(artist_id_or_name or "")
   local cid = spotify_service.clean_id(raw)
@@ -1710,13 +1715,17 @@ function spotify_service.resolve_artist(artist_id_or_name)
     return cid, nil, nil
   end
 
-  -- 否则传入的是歌手名或非标准 ID，触发一次轻量歌手搜索
-  local search_res = spotify_service.search(raw, 1, 0)
+  -- 否则传入的是歌手名或复合 URI，先尝试轻量搜索
+  local search_res = spotify_service.search(raw, 5, 0)
   if search_res and search_res.artists and #search_res.artists > 0 then
-    local best = search_res.artists[1]
-    if best and best.id then
-      artist_resolve_cache[cid] = { id = best.id, name = best.name or raw, avatar = best.avatarUrl or best.coverUrl }
-      return best.id, best.name or raw, best.avatarUrl or best.coverUrl
+    for _, art in ipairs(search_res.artists) do
+      if art and art.id then
+        local real_cid = spotify_service.clean_id(art.id)
+        if string.len(real_cid) == 22 then
+          artist_resolve_cache[cid] = { id = real_cid, name = art.name or raw, avatar = art.avatarUrl or art.coverUrl }
+          return real_cid, art.name or raw, art.avatarUrl or art.coverUrl
+        end
+      end
     end
   end
 
@@ -1724,7 +1733,29 @@ function spotify_service.resolve_artist(artist_id_or_name)
   return cid, raw, nil
 end
 
---- 获取艺人详情资料 (双轨: Pathfinder queryArtistOverview 优先，附带 ID 自适应与全保底)
+--- 从 Pathfinder 拉取并缓存完整的艺人总览 (包含 profile、visuals、topTracks、albums、singles，0 次 403 风险)
+function spotify_service.get_artist_overview_data(cid)
+  if not cid or string.len(cid) ~= 22 then return nil end
+  if artist_overview_cache[cid] then
+    return artist_overview_cache[cid]
+  end
+
+  local hash = "eafb1620d783ece118e72fbfede2b0064483e029d3c1aafafa1c2de0e25a89e7"
+  local res, err = spotify_service.pathfinder_query("queryArtistOverview", hash, {
+    uri = "spotify:artist:" .. cid,
+    locale = "zh-CN",
+    includePrerelease = true
+  })
+
+  if res and type(res) == "table" and res.data and res.data.artistUnion and res.data.artistUnion.__typename ~= "NotFound" then
+    artist_overview_cache[cid] = res.data.artistUnion
+    return res.data.artistUnion
+  end
+
+  return nil
+end
+
+--- 获取艺人详情资料 (共享 queryArtistOverview 缓存，附带全保底)
 function spotify_service.get_artist(artist_id)
   local cid, detected_name, detected_avatar = spotify_service.resolve_artist(artist_id)
   local fallback_name = detected_name or tostring(artist_id or "Spotify 艺人")
@@ -1733,9 +1764,9 @@ function spotify_service.get_artist(artist_id)
     return {
       id = tostring(artist_id or "unknown"),
       name = fallback_name,
-      coverUrl = detected_avatar,
-      avatarUrl = detected_avatar,
-      avatar = detected_avatar,
+      coverUrl = detected_avatar or "",
+      avatarUrl = detected_avatar or "",
+      avatar = detected_avatar or "",
       description = "Spotify 认证艺人",
       albumCount = 0,
       songCount = 0,
@@ -1743,122 +1774,61 @@ function spotify_service.get_artist(artist_id)
     }
   end
 
-  local token = spotify_service.ensure_token()
-  local artist_obj = nil
-
-  -- 1. 优先通过 Pathfinder queryArtistOverview 提取（含官方高清头像、传记、代表作）
-  if string.len(cid) == 22 then
-    local hash = "eafb1620d783ece118e72fbfede2b0064483e029d3c1aafafa1c2de0e25a89e7"
-    local res, err = spotify_service.pathfinder_query("queryArtistOverview", hash, {
-      uri = "spotify:artist:" .. cid,
-      locale = "zh-CN",
-      includePrerelease = true
-    })
-
-    if res and type(res) == "table" and res.data and res.data.artistUnion then
-      local au = res.data.artistUnion
-      local prof = au.profile or {}
-      local name = prof.name or detected_name or fallback_name
-      local avatar = detected_avatar
-      if prof.avatar and prof.avatar.sources and #prof.avatar.sources > 0 then
-        avatar = prof.avatar.sources[1].url
-      elseif au.visuals and au.visuals.avatarImage and au.visuals.avatarImage.sources and #au.visuals.avatarImage.sources > 0 then
-        avatar = au.visuals.avatarImage.sources[1].url
-      elseif au.headerImage and au.headerImage.sources and #au.headerImage.sources > 0 then
-        avatar = au.headerImage.sources[1].url
-      end
-
-      local monthly_listeners = au.stats and au.stats.monthlyListeners or 0
-      local desc_parts = {}
-      if prof.biography and prof.biography.text and string.len(prof.biography.text) > 0 then
-        table.insert(desc_parts, prof.biography.text)
-      end
-      if monthly_listeners > 0 then
-        local fol_str = (monthly_listeners >= 1000000 and string.format("%.1fM", monthly_listeners / 1000000)) or (monthly_listeners >= 1000 and string.format("%.1fK", monthly_listeners / 1000)) or tostring(monthly_listeners)
-        table.insert(desc_parts, "月听众数: " .. fol_str)
-      end
-
-      artist_obj = {
-        id = cid,
-        name = name,
-        coverUrl = avatar,
-        avatarUrl = avatar,
-        avatar = avatar,
-        description = table.concat(desc_parts, " | "),
-        albumCount = (au.discography and au.discography.albums and au.discography.albums.totalCount) or 0,
-        songCount = (au.discography and au.discography.topTracks and #au.discography.topTracks.items) or 10,
-        provider = "spotube"
-      }
-    end
-  end
-
-  -- 2. 降级方案：REST API /v1/artists/{id}
-  if not artist_obj and token and string.len(cid) == 22 then
-    local function do_request(t)
-      local url = "https://api.spotify.com/v1/artists/" .. tostring(cid)
-      local headers = {
-        ["User-Agent"] = constants.USER_AGENT_DESKTOP,
-        ["Authorization"] = "Bearer " .. tostring(t)
-      }
-      local sp_dc = store.get("sp_dc")
-      if sp_dc and string.len(sp_dc) > 0 then
-        headers["Cookie"] = "sp_dc=" .. tostring(sp_dc)
-      end
-      return http.get(url, headers)
+  local au = spotify_service.get_artist_overview_data(cid)
+  if au then
+    local prof = au.profile or {}
+    local name = prof.name or detected_name or fallback_name
+    local avatar = detected_avatar
+    if prof.avatar and prof.avatar.sources and #prof.avatar.sources > 0 then
+      avatar = prof.avatar.sources[1].url
+    elseif au.visuals and au.visuals.avatarImage and au.visuals.avatarImage.sources and #au.visuals.avatarImage.sources > 0 then
+      avatar = au.visuals.avatarImage.sources[1].url
+    elseif au.headerImage and au.headerImage.sources and #au.headerImage.sources > 0 then
+      avatar = au.headerImage.sources[1].url
     end
 
-    local res = do_request(token)
-    if res and type(res) == "table" and res.name then
-      local avatar = detected_avatar
-      if res.images and #res.images > 0 then
-        avatar = res.images[1].url
-      end
-      local genres = res.genres or {}
-      local followers_cnt = tonumber(res.followers and res.followers.total or 0) or 0
-      local desc_parts = {}
-      if #genres > 0 then
-        table.insert(desc_parts, "风格: " .. table.concat(genres, ", "))
-      end
-      if followers_cnt > 0 then
-        local fol_str = (followers_cnt >= 1000000 and string.format("%.1fM", followers_cnt / 1000000)) or (followers_cnt >= 1000 and string.format("%.1fK", followers_cnt / 1000)) or tostring(followers_cnt)
-        table.insert(desc_parts, "粉丝: " .. fol_str)
-      end
-
-      artist_obj = {
-        id = cid,
-        name = tostring(res.name),
-        coverUrl = avatar,
-        avatarUrl = avatar,
-        avatar = avatar,
-        description = table.concat(desc_parts, " | "),
-        genres = genres,
-        followers = followers_cnt,
-        albumCount = 0,
-        songCount = 10,
-        provider = "spotube"
-      }
+    local monthly_listeners = au.stats and au.stats.monthlyListeners or 0
+    local desc_parts = {}
+    if prof.biography and prof.biography.text and string.len(prof.biography.text) > 0 then
+      table.insert(desc_parts, prof.biography.text)
     end
-  end
+    if monthly_listeners > 0 then
+      local fol_str = (monthly_listeners >= 1000000 and string.format("%.1fM", monthly_listeners / 1000000)) or (monthly_listeners >= 1000 and string.format("%.1fK", monthly_listeners / 1000)) or tostring(monthly_listeners)
+      table.insert(desc_parts, "月听众数: " .. fol_str)
+    end
 
-  -- 3. 全保底实体：绝不返回 nil，杜绝 Lazer 客户端报错
-  if not artist_obj then
-    artist_obj = {
+    local disco = au.discography or {}
+    local alb_count = (disco.albums and disco.albums.totalCount) or 0
+    local song_cnt = (disco.topTracks and disco.topTracks.items and #disco.topTracks.items) or 10
+
+    return {
       id = cid,
-      name = fallback_name,
-      coverUrl = detected_avatar,
-      avatarUrl = detected_avatar,
-      avatar = detected_avatar,
-      description = "Spotify 认证艺人",
-      albumCount = 0,
-      songCount = 10,
+      name = name,
+      coverUrl = avatar or "",
+      avatarUrl = avatar or "",
+      avatar = avatar or "",
+      description = table.concat(desc_parts, " | "),
+      albumCount = alb_count,
+      songCount = song_cnt,
       provider = "spotube"
     }
   end
 
-  return artist_obj
+  -- 全保底实体：绝不返回 nil，杜绝 Lazer 客户端报错
+  return {
+    id = cid,
+    name = fallback_name,
+    coverUrl = detected_avatar or "",
+    avatarUrl = detected_avatar or "",
+    avatar = detected_avatar or "",
+    description = "Spotify 认证艺人",
+    albumCount = 0,
+    songCount = 10,
+    provider = "spotube"
+  }
 end
 
---- 获取艺人热门单曲 (优先 Pathfinder queryArtistOverview.topTracks，对齐 Lazer 纯 List 要求，支持 offset 限频)
+--- 获取艺人热门单曲 (优先从 queryArtistOverview 中提取 Top 10 代表作，对齐 Lazer 强类型纯 List 契约)
 function spotify_service.get_artist_top_tracks(artist_id, offset)
   offset = tonumber(offset) or 0
   if offset > 0 then
@@ -1870,121 +1840,52 @@ function spotify_service.get_artist_top_tracks(artist_id, offset)
   if not cid or cid == "" then return {} end
 
   local songs = {}
-
-  -- 1. 优先从 queryArtistOverview 中直接提取 Top 10 代表作
-  if string.len(cid) == 22 then
-    local hash = "eafb1620d783ece118e72fbfede2b0064483e029d3c1aafafa1c2de0e25a89e7"
-    local res, err = spotify_service.pathfinder_query("queryArtistOverview", hash, {
-      uri = "spotify:artist:" .. cid,
-      locale = "zh-CN",
-      includePrerelease = true
-    })
-
-    if res and type(res) == "table" and res.data and res.data.artistUnion and res.data.artistUnion.discography and res.data.artistUnion.discography.topTracks then
-      local top_items = res.data.artistUnion.discography.topTracks.items or {}
-      for _, it in ipairs(top_items) do
-        local tr = it.track or {}
-        local raw_id = tr.id or (tr._uri and spotify_service.clean_id(tr._uri))
-        if raw_id then
-          local alb = tr.album or {}
-          local cover = nil
-          if alb.coverArt and alb.coverArt.sources and #alb.coverArt.sources > 0 then
-            cover = alb.coverArt.sources[1].url
-          end
-          local arts = {}
-          local art_names = {}
-          if tr.artists and tr.artists.items then
-            for _, a in ipairs(tr.artists.items) do
-              local an = a.profile and a.profile.name or a.name or ""
-              table.insert(art_names, an)
-              table.insert(arts, { id = a.id or (a.uri and spotify_service.clean_id(a.uri)) or an, name = an })
-            end
-          end
-          if #art_names == 0 and detected_name then
-            table.insert(art_names, detected_name)
-            table.insert(arts, { id = cid, name = detected_name })
-          end
-
-          local duration_ms = tonumber(tr.duration and tr.duration.totalMilliseconds) or 0
-          local song_obj = {
-            id = tostring(raw_id),
-            title = tostring(tr.name or "未知单曲"),
-            name = tostring(tr.name or "未知单曲"),
-            artist = table.concat(art_names, "/"),
-            artists = arts,
-            album = tostring(alb.name or ""),
-            albumName = tostring(alb.name or ""),
-            albumId = tostring(alb.id or (alb.uri and spotify_service.clean_id(alb.uri)) or ""),
-            duration = math.floor(duration_ms / 1000),
-            durationMs = duration_ms,
-            coverUrl = cover or detected_avatar,
-            provider = "spotube"
-          }
-          store.save_track_meta(song_obj.id, song_obj)
-          table.insert(songs, song_obj)
+  local au = spotify_service.get_artist_overview_data(cid)
+  if au and au.discography and au.discography.topTracks and au.discography.topTracks.items then
+    local top_items = au.discography.topTracks.items
+    for _, it in ipairs(top_items) do
+      local tr = it.track or {}
+      local raw_id = tr.id or (tr._uri and spotify_service.clean_id(tr._uri))
+      if raw_id then
+        local alb = tr.album or {}
+        local cover = nil
+        if alb.coverArt and alb.coverArt.sources and #alb.coverArt.sources > 0 then
+          cover = alb.coverArt.sources[1].url
         end
-      end
-
-      if #songs > 0 then
-        return songs
-      end
-    end
-  end
-
-  -- 2. 降级方案：REST API /v1/artists/{id}/top-tracks
-  local token = spotify_service.ensure_token()
-  if token and string.len(cid) == 22 then
-    local function do_request(t, market)
-      local url = "https://api.spotify.com/v1/artists/" .. tostring(cid) .. "/top-tracks?market=" .. tostring(market or "from_token")
-      local headers = {
-        ["User-Agent"] = constants.USER_AGENT_DESKTOP,
-        ["Authorization"] = "Bearer " .. tostring(t)
-      }
-      local sp_dc = store.get("sp_dc")
-      if sp_dc and string.len(sp_dc) > 0 then
-        headers["Cookie"] = "sp_dc=" .. tostring(sp_dc)
-      end
-      return http.get(url, headers)
-    end
-
-    local res = do_request(token, "from_token")
-    if not res or (type(res) == "table" and res.error) then
-      res = do_request(token, "US")
-    end
-
-    if res and type(res) == "table" and res.tracks then
-      for _, t in ipairs(res.tracks) do
-        if t and t.id then
-          local art_names = {}
-          local arts = {}
-          if t.artists then
-            for _, a in ipairs(t.artists) do
-              table.insert(art_names, a.name or "")
-              table.insert(arts, { id = a.id, name = a.name })
-            end
+        local arts = {}
+        local art_names = {}
+        if tr.artists and tr.artists.items then
+          for _, a in ipairs(tr.artists.items) do
+            local an = a.profile and a.profile.name or a.name or ""
+            local a_uri = a.uri or (a.id and ("spotify:artist:" .. a.id))
+            local a_clean_id = spotify_service.clean_id(a_uri or an)
+            table.insert(art_names, an)
+            table.insert(arts, { id = a_clean_id, name = an })
           end
-          local cover = nil
-          if t.album and t.album.images and #t.album.images > 0 then
-            cover = t.album.images[1].url
-          end
-
-          local song_obj = {
-            id = tostring(t.id),
-            title = tostring(t.name or "未知曲目"),
-            name = tostring(t.name or "未知曲目"),
-            artist = table.concat(art_names, "/"),
-            artists = arts,
-            album = tostring(t.album and t.album.name or ""),
-            albumName = tostring(t.album and t.album.name or ""),
-            albumId = tostring(t.album and t.album.id or ""),
-            duration = math.floor((tonumber(t.duration_ms) or 0) / 1000),
-            durationMs = tonumber(t.duration_ms) or 0,
-            coverUrl = cover or detected_avatar,
-            provider = "spotube"
-          }
-          store.save_track_meta(song_obj.id, song_obj)
-          table.insert(songs, song_obj)
         end
+        if #art_names == 0 then
+          table.insert(art_names, detected_name or "Spotify 艺人")
+          table.insert(arts, { id = cid, name = detected_name or "Spotify 艺人" })
+        end
+
+        local alb_id = alb.id or (alb.uri and spotify_service.clean_id(alb.uri)) or (cid .. "_top")
+        local duration_ms = tonumber(tr.duration and tr.duration.totalMilliseconds) or 0
+        local song_obj = {
+          id = tostring(raw_id),
+          title = tostring(tr.name or "未知单曲"),
+          name = tostring(tr.name or "未知单曲"),
+          artist = table.concat(art_names, "/"),
+          artists = arts,
+          album = tostring(alb.name or "热门单曲"),
+          albumName = tostring(alb.name or "热门单曲"),
+          albumId = tostring(alb_id),
+          duration = math.floor(duration_ms / 1000),
+          durationMs = duration_ms,
+          coverUrl = cover or detected_avatar or "",
+          provider = "spotube"
+        }
+        store.save_track_meta(song_obj.id, song_obj)
+        table.insert(songs, song_obj)
       end
     end
   end
@@ -1992,62 +1893,49 @@ function spotify_service.get_artist_top_tracks(artist_id, offset)
   return songs
 end
 
---- 获取艺人专辑/单曲作品集 (/v1/artists/{id}/albums，严格限制分页防卡死)
+--- 获取艺人专辑/单曲作品集 (直接复用 queryArtistOverview.discography，0 次额外网络请求，分页熔断)
 function spotify_service.get_artist_albums(artist_id, limit, offset)
   offset = tonumber(offset) or 0
   limit = tonumber(limit) or 30
   if offset >= 30 then
-    -- 单次拉取 30 首主要专辑，超出第一页直接返回空数组截断 Lazer 的 while (more)
+    -- 单页返回全部精选专辑，offset>=30 立即返回空数组阻断 Lazer 的 while (more)
     return {}
   end
-  if limit > 30 then limit = 30 end
-  if limit < 1 then limit = 30 end
 
   local cid, detected_name, detected_avatar = spotify_service.resolve_artist(artist_id)
   if not cid or cid == "" then return {} end
 
   local albums = {}
-  local token = spotify_service.ensure_token()
-  if token and string.len(cid) == 22 then
-    local function do_request(t)
-      local url = string.format(
-        "https://api.spotify.com/v1/artists/%s/albums?include_groups=album,single&limit=%d&offset=%d",
-        tostring(cid), limit, offset
-      )
-      local headers = {
-        ["User-Agent"] = constants.USER_AGENT_DESKTOP,
-        ["Authorization"] = "Bearer " .. tostring(t)
-      }
-      local sp_dc = store.get("sp_dc")
-      if sp_dc and string.len(sp_dc) > 0 then
-        headers["Cookie"] = "sp_dc=" .. tostring(sp_dc)
-      end
-      return http.get(url, headers)
-    end
-
-    local res = do_request(token)
-    if res and type(res) == "table" and res.items then
-      for _, item in ipairs(res.items) do
-        if item and item.id then
-          local cover = nil
-          if item.images and #item.images > 0 then
-            cover = item.images[1].url
+  local au = spotify_service.get_artist_overview_data(cid)
+  if au and au.discography then
+    local disco = au.discography
+    local sections = { disco.albums, disco.singles, disco.compilations }
+    for _, sec in ipairs(sections) do
+      if sec and sec.items then
+        for _, it in ipairs(sec.items) do
+          local rels = it.releases and it.releases.items
+          if rels and #rels > 0 then
+            for _, r in ipairs(rels) do
+              local r_id = r.id or (r.uri and spotify_service.clean_id(r.uri))
+              if r_id then
+                local cover = nil
+                if r.coverArt and r.coverArt.sources and #r.coverArt.sources > 0 then
+                  cover = r.coverArt.sources[1].url
+                end
+                table.insert(albums, {
+                  id = tostring(r_id),
+                  title = tostring(r.name or "精选专辑"),
+                  name = tostring(r.name or "精选专辑"),
+                  coverUrl = cover or detected_avatar or "",
+                  artist = detected_name or "Spotify 艺人",
+                  publishTime = (r.date and r.date.year and tostring(r.date.year)) or "",
+                  total = tonumber(r.tracks and r.tracks.totalCount or 0),
+                  songCount = tonumber(r.tracks and r.tracks.totalCount or 0),
+                  provider = "spotube"
+                })
+              end
+            end
           end
-          local art_name = detected_name or "未知艺人"
-          if item.artists and #item.artists > 0 then
-            art_name = item.artists[1].name or art_name
-          end
-          table.insert(albums, {
-            id = tostring(item.id),
-            title = tostring(item.name or "未知专辑"),
-            name = tostring(item.name or "未知专辑"),
-            coverUrl = cover or detected_avatar,
-            artist = art_name,
-            publishTime = item.release_date or "",
-            total = tonumber(item.total_tracks or 0),
-            songCount = tonumber(item.total_tracks or 0),
-            provider = "spotube"
-          })
         end
       end
     end
